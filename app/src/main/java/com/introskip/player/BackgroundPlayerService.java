@@ -133,6 +133,35 @@ public class BackgroundPlayerService extends Service {
         }
     }
 
+    public void replacePlaylist(List<VideoItem> items) {
+        snapshotCurrentProgress();
+        VideoItem current = getCurrentItem();
+        boolean wasPlaying = isPlaying();
+        String currentKey = current == null ? null : current.key();
+        playlist.clear();
+        for (VideoItem item : items) {
+            if (!playlist.contains(item)) {
+                playlist.add(item);
+            }
+        }
+        if (playlist.isEmpty()) {
+            currentIndex = -1;
+            resetPlayer();
+        } else {
+            currentIndex = 0;
+            if (currentKey != null) {
+                for (int i = 0; i < playlist.size(); i++) {
+                    if (playlist.get(i).key().equals(currentKey)) {
+                        currentIndex = i;
+                        break;
+                    }
+                }
+            }
+            prepareCurrent(wasPlaying);
+        }
+        notifyChanged();
+    }
+
     public void removeFromPlaylist(int index) {
         if (index < 0 || index >= playlist.size()) return;
         snapshotCurrentProgress();

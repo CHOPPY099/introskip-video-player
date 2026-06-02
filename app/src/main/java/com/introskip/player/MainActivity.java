@@ -718,6 +718,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         ArrayList<String> sourceTokens = sourceTokensForCurrentPlaylist();
         List<VideoItem> playlist = playerService.getPlaylist();
         ArrayList<String> playlistTokens = playlistTokens(playlist);
+        int minimumEpisode = scanMinimumEpisode(playlist);
         Set<String> existing = new HashSet<>();
         for (VideoItem item : playlist) {
             existing.add(item.key());
@@ -728,6 +729,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             if (existing.contains(item.key())) continue;
             int episode = episodeNumber(item.name);
             if (episode < 0) continue;
+            if (minimumEpisode >= 0 && episode <= minimumEpisode) continue;
             if (matchesSeries(item.name, sourceTokens, playlistTokens)) {
                 candidates.add(item);
             }
@@ -741,6 +743,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             playerService.addToPlaylist(item);
         }
         if (!candidates.isEmpty()) {
+            sortCurrentPlaylistByWatchOrder();
             saveActivePlaylistFromService();
         }
         refreshPlaylist();
@@ -748,7 +751,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshLibrary();
         Toast.makeText(
                 this,
-                candidates.isEmpty() ? "No new matching downloaded episodes found" : "Added " + candidates.size() + " downloaded episodes",
+                candidates.isEmpty()
+                        ? (minimumEpisode >= 0 ? "No newer downloaded episodes found after episode " + minimumEpisode : "No new matching downloaded episodes found")
+                        : "Added " + candidates.size() + " downloaded episodes",
                 Toast.LENGTH_SHORT
         ).show();
     }
@@ -818,6 +823,37 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             return parseInt(matcher.group(1), -1);
         }
         return -1;
+    }
+
+    private int scanMinimumEpisode(List<VideoItem> playlist) {
+        VideoItem current = playerService == null ? null : playerService.getCurrentItem();
+        int currentEpisode = current == null ? -1 : episodeNumber(current.name);
+        if (currentEpisode >= 0) return currentEpisode;
+
+        int highest = -1;
+        if (playlist != null) {
+            for (VideoItem item : playlist) {
+                highest = Math.max(highest, episodeNumber(item.name));
+            }
+        }
+        return highest;
+    }
+
+    private void sortCurrentPlaylistByWatchOrder() {
+        if (playerService == null) return;
+        List<VideoItem> sorted = playerService.getPlaylist();
+        if (sorted.size() < 2) return;
+        sorted.sort((first, second) -> {
+            int firstEpisode = episodeNumber(first.name);
+            int secondEpisode = episodeNumber(second.name);
+            if (firstEpisode >= 0 && secondEpisode >= 0 && firstEpisode != secondEpisode) {
+                return Integer.compare(firstEpisode, secondEpisode);
+            }
+            if (firstEpisode >= 0 && secondEpisode < 0) return -1;
+            if (firstEpisode < 0 && secondEpisode >= 0) return 1;
+            return first.name.compareToIgnoreCase(second.name);
+        });
+        playerService.replacePlaylist(sorted);
     }
 
     private void buildVideoOverlay(int textColor) {
