@@ -11,6 +11,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.net.Uri;
 import android.os.Build;
@@ -32,8 +33,10 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -66,10 +69,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
     private boolean videoFullscreen = false;
+    private boolean userDraggingVideoProgress = false;
     private String currentPlaylistName = "Default";
+    private FrameLayout videoContainer;
     private TextureView textureView;
     private Surface playbackSurface;
     private GestureDetector videoGestureDetector;
+    private LinearLayout videoControlsOverlay;
+    private Button overlayPlayPauseButton;
+    private SeekBar videoProgressBar;
+    private TextView videoProgressText;
     private LinearLayout rootLayout;
     private TextView nowPlayingText;
     private TextView counterText;
@@ -93,7 +102,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 refreshPlaylist();
                 refreshHistory();
             }
-            progressHandler.postDelayed(this, 2500);
+            progressHandler.postDelayed(this, 1000);
         }
     };
 
@@ -109,7 +118,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             playerService.setListener(MainActivity.this);
             serviceBound = true;
             progressHandler.removeCallbacks(progressTicker);
-            progressHandler.postDelayed(progressTicker, 2500);
+            progressHandler.postDelayed(progressTicker, 1000);
             refreshAll();
         }
 
@@ -209,12 +218,19 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         subtitle.setPadding(0, dp(4), 0, dp(14));
         rootLayout.addView(subtitle);
 
+        videoContainer = new FrameLayout(this);
+        videoContainer.setBackgroundColor(Color.BLACK);
         textureView = new TextureView(this);
         LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(210)
         );
-        rootLayout.addView(textureView, videoParams);
+        rootLayout.addView(videoContainer, videoParams);
+        videoContainer.addView(textureView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+        buildVideoOverlay(text);
         setupVideoGestures();
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
@@ -222,11 +238,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 releasePlaybackSurface();
                 playbackSurface = new Surface(surfaceTexture);
                 attachPlaybackSurface();
+                applyVideoAspectTransform();
             }
 
             @Override
             public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
                 attachPlaybackSurface();
+                applyVideoAspectTransform();
             }
 
             @Override
@@ -260,16 +278,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         previousButton.setOnClickListener(v -> {
             if (playerService != null) playerService.previous();
         });
-        playPauseButton.setOnClickListener(v -> {
-            if (playerService == null) return;
-            if (playerService.isPlaying()) {
-                playerService.pause();
-            } else {
-                if (playerService.getPlaylist().isEmpty()) return;
-                startPlaybackServiceIfNeeded();
-                playerService.play();
-            }
-        });
+        playPauseButton.setOnClickListener(v -> togglePlayback());
         nextButton.setOnClickListener(v -> {
             if (playerService != null) playerService.next();
         });
@@ -549,12 +558,74 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshAll();
     }
 
+    private void buildVideoOverlay(int textColor) {
+        videoControlsOverlay = new LinearLayout(this);
+        videoControlsOverlay.setOrientation(LinearLayout.HORIZONTAL);
+        videoControlsOverlay.setGravity(Gravity.CENTER_VERTICAL);
+        videoControlsOverlay.setPadding(dp(8), dp(6), dp(8), dp(6));
+        videoControlsOverlay.setBackgroundColor(Color.argb(190, 0, 0, 0));
+        videoControlsOverlay.setVisibility(View.GONE);
+
+        overlayPlayPauseButton = primaryButton("Play");
+        overlayPlayPauseButton.setMinWidth(dp(82));
+        overlayPlayPauseButton.setOnClickListener(v -> togglePlayback());
+        videoControlsOverlay.addView(overlayPlayPauseButton);
+
+        videoProgressBar = new SeekBar(this);
+        videoProgressBar.setMax(0);
+        videoProgressBar.setProgress(0);
+        videoProgressBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    updateVideoProgressText(progress, seekBar.getMax());
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                userDraggingVideoProgress = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                userDraggingVideoProgress = false;
+                if (playerService != null) {
+                    playerService.seekTo(seekBar.getProgress());
+                }
+                updateVideoControls();
+            }
+        });
+        videoControlsOverlay.addView(videoProgressBar, new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1
+        ));
+
+        videoProgressText = text("0:00 / 0:00", 12, textColor, false);
+        videoProgressText.setGravity(Gravity.CENTER_VERTICAL);
+        videoControlsOverlay.addView(videoProgressText);
+
+        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+        );
+        videoContainer.addView(videoControlsOverlay, overlayParams);
+    }
+
     private void setupVideoGestures() {
         videoGestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
+            public boolean onSingleTapConfirmed(MotionEvent event) {
+                toggleVideoControls();
+                return true;
+            }
+
+            @Override
             public boolean onDoubleTap(MotionEvent event) {
                 float x = event.getX();
-                int width = Math.max(1, textureView.getWidth());
+                int width = Math.max(1, videoContainer.getWidth());
                 if (x < width / 3f) {
                     if (playerService != null) playerService.seekBy(-10000);
                 } else if (x > width * 2f / 3f) {
@@ -572,19 +643,20 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         });
 
         textureView.setOnTouchListener((view, event) -> videoGestureDetector.onTouchEvent(event));
+        videoContainer.setOnTouchListener((view, event) -> videoGestureDetector.onTouchEvent(event));
     }
 
     private void setVideoFullscreen(boolean fullscreen) {
         videoFullscreen = fullscreen;
         int height = fullscreen ? getResources().getDisplayMetrics().heightPixels : dp(210);
-        textureView.setLayoutParams(new LinearLayout.LayoutParams(
+        videoContainer.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 height
         ));
 
         for (int i = 0; i < rootLayout.getChildCount(); i++) {
             View child = rootLayout.getChildAt(i);
-            if (child != textureView) {
+            if (child != videoContainer) {
                 child.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
             }
         }
@@ -598,7 +670,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
         if (fullscreen) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            textureView.setSystemUiVisibility(
+            videoContainer.setSystemUiVisibility(
                     View.SYSTEM_UI_FLAG_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -608,8 +680,77 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             );
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            textureView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+            videoContainer.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
+        videoContainer.post(this::applyVideoAspectTransform);
+    }
+
+    private void togglePlayback() {
+        if (playerService == null) return;
+        if (playerService.isPlaying()) {
+            playerService.pause();
+        } else {
+            if (playerService.getPlaylist().isEmpty()) return;
+            startPlaybackServiceIfNeeded();
+            playerService.play();
+        }
+        updateVideoControls();
+    }
+
+    private void toggleVideoControls() {
+        setVideoControlsVisible(videoControlsOverlay == null || videoControlsOverlay.getVisibility() != View.VISIBLE);
+    }
+
+    private void setVideoControlsVisible(boolean visible) {
+        if (videoControlsOverlay == null) return;
+        videoControlsOverlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) {
+            updateVideoControls();
+        }
+    }
+
+    private void updateVideoControls() {
+        if (playerService == null || videoProgressBar == null || overlayPlayPauseButton == null) return;
+        int duration = Math.max(0, playerService.getDurationMs());
+        int position = Math.max(0, playerService.getCurrentPositionMs());
+        overlayPlayPauseButton.setText(playerService.isPlaying() ? "Pause" : "Play");
+        if (!userDraggingVideoProgress) {
+            videoProgressBar.setMax(duration);
+            videoProgressBar.setProgress(Math.min(position, duration));
+            updateVideoProgressText(position, duration);
+        }
+        applyVideoAspectTransform();
+    }
+
+    private void updateVideoProgressText(int position, int duration) {
+        if (videoProgressText == null) return;
+        videoProgressText.setText(formatTime(position) + " / " + formatTime(duration));
+    }
+
+    private void applyVideoAspectTransform() {
+        if (textureView == null || playerService == null) return;
+        int viewWidth = textureView.getWidth();
+        int viewHeight = textureView.getHeight();
+        int videoWidth = playerService.getVideoWidth();
+        int videoHeight = playerService.getVideoHeight();
+        if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {
+            textureView.setTransform(null);
+            return;
+        }
+
+        float viewAspect = viewWidth / (float) viewHeight;
+        float videoAspect = videoWidth / (float) videoHeight;
+        float scaleX = 1f;
+        float scaleY = 1f;
+        if (videoAspect > viewAspect) {
+            scaleY = viewAspect / videoAspect;
+        } else {
+            scaleX = videoAspect / viewAspect;
+        }
+
+        Matrix matrix = new Matrix();
+        matrix.setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f);
+        textureView.setTransform(matrix);
     }
 
     private void startPlaybackServiceIfNeeded() {
@@ -744,6 +885,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int total = playerService.getPlaylist().size();
         counterText.setText(total == 0 ? "0 / 0" : String.format(Locale.US, "%d / %d", index + 1, total));
         playPauseButton.setText(playerService.isPlaying() ? "Pause" : "Play");
+        updateVideoControls();
     }
 
     private void refreshLibrary() {

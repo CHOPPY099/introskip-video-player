@@ -218,6 +218,13 @@ public class BackgroundPlayerService extends Service {
         if (player == null || !prepared) return;
         int duration = Math.max(0, player.getDuration());
         int target = Math.max(0, Math.min(duration, player.getCurrentPosition() + deltaMs));
+        seekTo(target);
+    }
+
+    public void seekTo(int positionMs) {
+        if (player == null || !prepared) return;
+        int duration = Math.max(0, player.getDuration());
+        int target = Math.max(0, Math.min(duration, positionMs));
         player.seekTo(target);
         updatePlaybackState();
         notifyChanged();
@@ -270,6 +277,14 @@ public class BackgroundPlayerService extends Service {
         return Math.max(0, player.getDuration());
     }
 
+    public int getVideoWidth() {
+        return player == null ? 0 : Math.max(0, player.getVideoWidth());
+    }
+
+    public int getVideoHeight() {
+        return player == null ? 0 : Math.max(0, player.getVideoHeight());
+    }
+
     public int getSavedProgressMs(VideoItem item) {
         if (item == null) return 0;
         Integer value = progressByKey.get(item.key());
@@ -312,6 +327,7 @@ public class BackgroundPlayerService extends Service {
             updatePlaybackState();
             notifyChanged();
         });
+        player.setOnVideoSizeChangedListener((mp, width, height) -> notifyChanged());
         player.setOnCompletionListener(mp -> {
             markCurrentWatched();
             prepared = false;
