@@ -2,6 +2,7 @@ package com.introskip.player;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.PictureInPictureParams;
 import android.content.ComponentName;
 import android.content.ContentUris;
 import android.content.Context;
@@ -31,6 +32,7 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
+import android.util.Rational;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -75,6 +77,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
     private boolean videoFullscreen = false;
+    private boolean inPictureInPicture = false;
     private boolean userDraggingVideoProgress = false;
     private boolean activityResumed = false;
     private long lastDragSeekMs = 0;
@@ -85,6 +88,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private GestureDetector videoGestureDetector;
     private LinearLayout videoControlsOverlay;
     private Button overlayPlayPauseButton;
+    private Button overlayPipButton;
     private SeekBar videoProgressBar;
     private TextView videoProgressText;
     private LinearLayout rootLayout;
@@ -168,6 +172,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         rootLayout.post(this::applyOrientationFullscreen);
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        inPictureInPicture = isInPictureInPictureMode;
+        applyPictureInPictureUi();
     }
 
     @Override
@@ -674,6 +685,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private void openSourceEpisode(int offset) {
         String link = currentSourceLink();
         if (link.isEmpty()) return;
+        if (offset != 0 && isDynamicEpisodeSource(link)) {
+            Toast.makeText(this, "This site changes the episode link ID. Open source and use the site's next episode button.", Toast.LENGTH_LONG).show();
+            openSourceEpisode(0);
+            return;
+        }
         String target = offset == 0 ? link : shiftEpisodeInLink(link, offset);
         if (target.isEmpty()) return;
         if (!target.equals(link) && sourceLinkInput != null) {
@@ -682,6 +698,15 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         }
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
         startActivity(intent);
+    }
+
+    private boolean isDynamicEpisodeSource(String link) {
+        try {
+            String host = Uri.parse(link).getHost();
+            return host != null && host.toLowerCase(Locale.US).contains("movies.do");
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private String shiftEpisodeInLink(String link, int offset) {
@@ -869,6 +894,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         overlayPlayPauseButton.setOnClickListener(v -> togglePlayback());
         videoControlsOverlay.addView(overlayPlayPauseButton);
 
+        overlayPipButton = secondaryButton("PiP");
+        overlayPipButton.setMinWidth(dp(70));
+        overlayPipButton.setOnClickListener(v -> enterVideoPictureInPicture());
+        videoControlsOverlay.addView(overlayPipButton);
+
         videoProgressBar = new SeekBar(this);
         videoProgressBar.setMax(0);
         videoProgressBar.setProgress(0);
@@ -990,7 +1020,61 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         videoContainer.post(this::applyVideoAspectTransform);
     }
 
+    private void enterVideoPictureInPicture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || videoContainer == null) return;
+        setVideoControlsVisible(false);
+        Rational aspect = pictureInPictureAspect();
+        PictureInPictureParams params = new PictureInPictureParams.Builder()
+                .setAspectRatio(aspect)
+                .build();
+        enterPictureInPictureMode(params);
+    }
+
+    private Rational pictureInPictureAspect() {
+        int width = playerService == null ? 0 : playerService.getVideoWidth();
+        int height = playerService == null ? 0 : playerService.getVideoHeight();
+        if (width <= 0 || height <= 0) {
+            width = Math.max(1, videoContainer.getWidth());
+            height = Math.max(1, videoContainer.getHeight());
+        }
+        float ratio = width / (float) height;
+        if (ratio > 2.39f) {
+            width = 239;
+            height = 100;
+        } else if (ratio < 0.42f) {
+            width = 42;
+            height = 100;
+        }
+        return new Rational(width, height);
+    }
+
+    private void applyPictureInPictureUi() {
+        if (videoContainer == null || rootLayout == null) return;
+        for (int i = 0; i < rootLayout.getChildCount(); i++) {
+            View child = rootLayout.getChildAt(i);
+            if (child != videoContainer) {
+                child.setVisibility(inPictureInPicture ? View.GONE : View.VISIBLE);
+            }
+        }
+        videoControlsOverlay.setVisibility(View.GONE);
+        videoContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                inPictureInPicture ? LinearLayout.LayoutParams.MATCH_PARENT : (videoFullscreen ? getResources().getDisplayMetrics().heightPixels : dp(210))
+        ));
+        rootLayout.setPadding(
+                inPictureInPicture || videoFullscreen ? 0 : dp(14),
+                inPictureInPicture || videoFullscreen ? 0 : dp(18),
+                inPictureInPicture || videoFullscreen ? 0 : dp(14),
+                inPictureInPicture || videoFullscreen ? 0 : dp(28)
+        );
+        videoContainer.post(this::applyVideoAspectTransform);
+        if (!inPictureInPicture) {
+            applyOrientationFullscreen();
+        }
+    }
+
     private void applyOrientationFullscreen() {
+        if (inPictureInPicture) return;
         boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
         if (videoContainer != null && videoFullscreen != landscape) {
             setVideoFullscreen(landscape);
