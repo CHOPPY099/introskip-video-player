@@ -110,7 +110,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private final ArrayList<View> downloadsPageViews = new ArrayList<>();
     private final ArrayList<View> historyPageViews = new ArrayList<>();
     private final ArrayList<View> morePageViews = new ArrayList<>();
+    private final ArrayList<View> playlistHubViews = new ArrayList<>();
+    private final ArrayList<View> playlistDetailViews = new ArrayList<>();
     private String activeBottomTab = "video";
+    private boolean playlistDetailOpen = false;
     private View playerSection;
     private View playlistSection;
     private View historySection;
@@ -131,6 +134,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private LinearLayout libraryList;
     private LinearLayout playlistList;
     private LinearLayout historyList;
+    private TextView playlistDetailTitle;
 
     private final Runnable progressTicker = new Runnable() {
         @Override
@@ -456,7 +460,26 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playlistEditRow.addView(deletePlaylistButton);
         playlistControls.addView(playlistEditRow);
 
-        playlistControls.addView(text("Source link", 13, muted, false));
+        playlistTabs = new LinearLayout(this);
+        playlistTabs.setOrientation(LinearLayout.VERTICAL);
+        playlistControls.addView(playlistTabs);
+        playlistHubViews.add(playlistTabs);
+
+        Button backToPlaylistsButton = secondaryButton("Back to playlists");
+        backToPlaylistsButton.setOnClickListener(v -> {
+            playlistDetailOpen = false;
+            applyBottomTabVisibility();
+        });
+        playlistControls.addView(backToPlaylistsButton, fullParams());
+        playlistDetailViews.add(backToPlaylistsButton);
+
+        playlistDetailTitle = text("", 16, text, true);
+        playlistControls.addView(playlistDetailTitle);
+        playlistDetailViews.add(playlistDetailTitle);
+
+        TextView sourceLinkLabel = text("Source link", 13, muted, false);
+        playlistControls.addView(sourceLinkLabel);
+        playlistDetailViews.add(sourceLinkLabel);
         sourceLinkInput = input("");
         sourceLinkInput.setHint("Episode page link");
         sourceLinkInput.addTextChangedListener(new SimpleTextWatcher() {
@@ -466,6 +489,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             }
         });
         playlistControls.addView(sourceLinkInput, fullParams());
+        playlistDetailViews.add(sourceLinkInput);
 
         LinearLayout sourceActions = row();
         Button openSourceButton = primaryButton("Open source");
@@ -478,10 +502,17 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         sourceActions.addView(previousEpisodeButton, weightParams());
         sourceActions.addView(nextEpisodeButton, weightParams());
         playlistControls.addView(sourceActions);
+        playlistDetailViews.add(sourceActions);
 
-        Button scanDownloadsButton = secondaryButton("Scan downloads into playlist");
+        LinearLayout matchActions = row();
+        Button matchSeriesButton = primaryButton("Find same series");
+        Button scanDownloadsButton = secondaryButton("Scan new downloads");
+        matchSeriesButton.setOnClickListener(v -> addMatchingSeriesFromFirstVideo());
         scanDownloadsButton.setOnClickListener(v -> scanDownloadsIntoCurrentPlaylist());
-        playlistControls.addView(scanDownloadsButton, fullParams());
+        matchActions.addView(matchSeriesButton, weightParams());
+        matchActions.addView(scanDownloadsButton, weightParams());
+        playlistControls.addView(matchActions);
+        playlistDetailViews.add(matchActions);
 
         LinearLayout sortActions = row();
         Button sortEpisode = secondaryButton("Sort episode");
@@ -494,10 +525,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         sortActions.addView(sortName, weightParams());
         sortActions.addView(sortDate, weightParams());
         playlistControls.addView(sortActions);
-
-        playlistTabs = new LinearLayout(this);
-        playlistTabs.setOrientation(LinearLayout.VERTICAL);
-        playlistControls.addView(playlistTabs);
+        playlistDetailViews.add(sortActions);
         rootLayout.addView(playlistControls);
         playlistPageViews.add(playlistControls);
 
@@ -505,10 +533,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playlistTitle.setPadding(0, dp(18), 0, dp(8));
         rootLayout.addView(playlistTitle);
         playlistPageViews.add(playlistTitle);
+        playlistDetailViews.add(playlistTitle);
         playlistList = new LinearLayout(this);
         playlistList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(playlistList);
         playlistPageViews.add(playlistList);
+        playlistDetailViews.add(playlistList);
 
         TextView historyTitle = sectionTitle("History");
         historySection = historyTitle;
@@ -584,7 +614,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         bottomMoreButton = bottomNavButton("More");
 
         bottomVideoButton.setOnClickListener(v -> showBottomTab("video", bottomVideoButton));
-        bottomPlaylistButton.setOnClickListener(v -> showBottomTab("playlist", bottomPlaylistButton));
+        bottomPlaylistButton.setOnClickListener(v -> {
+            playlistDetailOpen = false;
+            showBottomTab("playlist", bottomPlaylistButton);
+        });
         bottomDownloadsButton.setOnClickListener(v -> showBottomTab("downloads", bottomDownloadsButton));
         bottomHistoryButton.setOnClickListener(v -> showBottomTab("history", bottomHistoryButton));
         bottomMoreButton.setOnClickListener(v -> showBottomTab("more", bottomMoreButton));
@@ -608,11 +641,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void applyBottomTabVisibility() {
         if (videoFullscreen || inPictureInPicture) return;
-        setPageVisible(videoPageViews, "video".equals(activeBottomTab));
-        setPageVisible(playlistPageViews, "playlist".equals(activeBottomTab));
-        setPageVisible(downloadsPageViews, "downloads".equals(activeBottomTab));
-        setPageVisible(historyPageViews, "history".equals(activeBottomTab));
-        setPageVisible(morePageViews, "more".equals(activeBottomTab));
+        boolean videoActive = "video".equals(activeBottomTab);
+        boolean playlistActive = "playlist".equals(activeBottomTab);
+        boolean downloadsActive = "downloads".equals(activeBottomTab);
+        boolean historyActive = "history".equals(activeBottomTab);
+        boolean moreActive = "more".equals(activeBottomTab);
+        setPageVisible(videoPageViews, videoActive);
+        setPageVisible(playlistPageViews, playlistActive);
+        setPageVisible(downloadsPageViews, downloadsActive);
+        setPageVisible(historyPageViews, historyActive);
+        setPageVisible(morePageViews, moreActive);
+        setPageVisible(playlistHubViews, playlistActive && !playlistDetailOpen);
+        setPageVisible(playlistDetailViews, playlistActive && playlistDetailOpen);
     }
 
     private void setPageVisible(ArrayList<View> pageViews, boolean visible) {
@@ -675,7 +715,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.4\n"
+                "Version: 2.5\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -877,7 +917,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         updateSourceInputForCurrentPlaylist();
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
+        playlistDetailOpen = true;
         refreshAll();
+        showBottomTab("playlist", bottomPlaylistButton);
     }
 
     private void deleteCurrentPlaylist() {
@@ -889,7 +931,22 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         updateSourceInputForCurrentPlaylist();
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
+        playlistDetailOpen = false;
         refreshAll();
+    }
+
+    private void openPlaylistDetail(String name) {
+        saveActivePlaylistFromService();
+        saveCurrentSourceFromInput();
+        if (!savedPlaylists.containsKey(name)) return;
+        currentPlaylistName = name;
+        playlistNameInput.setText(name);
+        updateSourceInputForCurrentPlaylist();
+        loadCurrentPlaylistIntoService();
+        saveAllPlaylists();
+        playlistDetailOpen = true;
+        refreshAll();
+        showBottomTab("playlist", bottomPlaylistButton);
     }
 
     private void updateSourceInputForCurrentPlaylist() {
@@ -1047,6 +1104,52 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshLibrary();
         refreshDebugInfo();
         Toast.makeText(this, lastScanMessage, Toast.LENGTH_SHORT).show();
+    }
+
+    private void addMatchingSeriesFromFirstVideo() {
+        if (playerService == null) return;
+        List<VideoItem> playlist = playerService.getPlaylist();
+        if (playlist.isEmpty()) {
+            Toast.makeText(this, "Add one video first so the app knows the series name.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        reloadLibraryVideos();
+        ArrayList<String> tokens = playlistTokens(playlist);
+        if (tokens.isEmpty()) {
+            Toast.makeText(this, "Could not detect a series name from the first video.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Set<String> existing = new HashSet<>();
+        for (VideoItem item : playlist) {
+            existing.add(item.key());
+        }
+
+        ArrayList<VideoItem> candidates = new ArrayList<>();
+        for (VideoItem item : libraryVideos) {
+            if (existing.contains(item.key())) continue;
+            if (matchesSeries(item.name, new ArrayList<>(), tokens)) {
+                candidates.add(item);
+            }
+        }
+        candidates.sort((first, second) -> {
+            int firstEpisode = episodeNumber(first.name);
+            int secondEpisode = episodeNumber(second.name);
+            if (firstEpisode >= 0 && secondEpisode >= 0 && firstEpisode != secondEpisode) {
+                return Integer.compare(firstEpisode, secondEpisode);
+            }
+            if (firstEpisode >= 0 && secondEpisode < 0) return -1;
+            if (firstEpisode < 0 && secondEpisode >= 0) return 1;
+            return first.name.compareToIgnoreCase(second.name);
+        });
+
+        refreshLibrary();
+        if (candidates.isEmpty()) {
+            lastScanMessage = "No matching files found for " + playlist.get(0).name;
+            Toast.makeText(this, lastScanMessage, Toast.LENGTH_SHORT).show();
+            refreshDebugInfo();
+            return;
+        }
+        showScanPreview(candidates);
     }
 
     private ArrayList<String> sourceTokensForCurrentPlaylist() {
@@ -1733,7 +1836,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             VideoItem item = playlist.get(i);
             boolean watched = playerService.isWatched(item);
             String action = index == current && playerService.isPlaying() ? "Playing" : (index == current ? "Current" : "Play");
-            LinearLayout row = videoRow(item, action, watched, (index + 1) + ". ", v -> {
+            LinearLayout row = playlistVideoRow(item, watched, (index + 1) + ". ");
+            LinearLayout controls = row();
+            Button actionButton = primaryButton(action);
+            actionButton.setOnClickListener(v -> {
                 if (playerService != null) {
                     if (index == playerService.getCurrentIndex() && playerService.isPlaying()) {
                         playerService.pause();
@@ -1758,10 +1864,17 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             down.setOnClickListener(v -> movePlaylistItem(index, 1));
             Button reset = secondaryButton("Reset");
             reset.setOnClickListener(v -> resetVideoHistory(item));
-            row.addView(up);
-            row.addView(down);
-            row.addView(reset);
-            row.addView(remove);
+            actionButton.setTextSize(12);
+            up.setTextSize(12);
+            down.setTextSize(12);
+            reset.setTextSize(12);
+            remove.setTextSize(12);
+            controls.addView(actionButton, weightParams());
+            controls.addView(up, weightParams());
+            controls.addView(down, weightParams());
+            controls.addView(reset, weightParams());
+            controls.addView(remove, weightParams());
+            row.addView(controls);
             playlistList.addView(row);
         }
         refreshPlayerHeader();
@@ -1770,15 +1883,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private void refreshPlaylistTabs() {
         if (playlistTabs == null) return;
         playlistTabs.removeAllViews();
+        if (playlistDetailTitle != null) {
+            playlistDetailTitle.setText("Open: " + currentPlaylistName + " - " + playlistSummary(savedPlaylists.get(currentPlaylistName)));
+        }
         for (String name : savedPlaylists.keySet()) {
-            Button button = name.equals(currentPlaylistName)
-                    ? primaryButton(name)
-                    : secondaryButton(name);
-            button.setOnClickListener(v -> {
-                playlistNameInput.setText(name);
-                openOrCreatePlaylist();
-            });
-            playlistTabs.addView(button, fullParams());
+            playlistTabs.addView(playlistCard(name, savedPlaylists.get(name)));
         }
     }
 
@@ -1867,6 +1976,59 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         return row;
     }
 
+    private LinearLayout playlistCard(String name, ArrayList<VideoItem> playlist) {
+        LinearLayout card = panel();
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        TextView nameView = text(name, 18, name.equals(currentPlaylistName) ? Color.rgb(33, 199, 168) : Color.rgb(244, 247, 251), true);
+        TextView metaView = text(playlistSummary(playlist), 13, Color.rgb(170, 180, 194), false);
+        card.addView(nameView);
+        card.addView(metaView);
+
+        LinearLayout actions = row();
+        Button open = primaryButton("Open");
+        Button play = secondaryButton("Play");
+        open.setOnClickListener(v -> openPlaylistDetail(name));
+        play.setOnClickListener(v -> {
+            openPlaylistDetail(name);
+            if (playerService != null && !playerService.getPlaylist().isEmpty()) {
+                startPlaybackServiceIfNeeded();
+                playerService.playIndex(0);
+            }
+        });
+        actions.addView(open, weightParams());
+        actions.addView(play, weightParams());
+        card.addView(actions);
+        return card;
+    }
+
+    private String playlistSummary(ArrayList<VideoItem> playlist) {
+        int count = playlist == null ? 0 : playlist.size();
+        long duration = 0;
+        if (playlist != null) {
+            for (VideoItem item : playlist) {
+                duration += Math.max(0, item.durationMs);
+            }
+        }
+        String trackLabel = count == 1 ? "1 track" : count + " tracks";
+        return duration > 0 ? trackLabel + " - " + formatDuration(duration) : trackLabel;
+    }
+
+    private LinearLayout playlistVideoRow(VideoItem item, boolean watched, String prefix) {
+        LinearLayout row = panel();
+        row.setOrientation(LinearLayout.VERTICAL);
+        if (watched) {
+            row.setBackgroundResource(R.drawable.panel_watched_bg);
+        }
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        TextView name = text(prefix + item.name, 15, watched ? Color.rgb(158, 166, 176) : Color.rgb(244, 247, 251), true);
+        TextView meta = text(watched ? "Watched - " + formatMeta(item) : formatMeta(item), 12, Color.rgb(170, 180, 194), false);
+        row.addView(name);
+        row.addView(meta);
+        return row;
+    }
+
     private String formatMeta(VideoItem item) {
         String progress = progressLabel(item);
         String duration = item.durationMs > 0
@@ -1877,6 +2039,17 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 : "";
         String base = size.isEmpty() ? duration : duration + " - " + size;
         return progress.isEmpty() ? base : progress + " - " + base;
+    }
+
+    private String formatDuration(long millis) {
+        long totalSeconds = Math.max(0, millis / 1000);
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.US, "%dh %02dm %02ds", hours, minutes, seconds);
+        }
+        return String.format(Locale.US, "%dm %02ds", minutes, seconds);
     }
 
     private String formatProgress(VideoItem item) {
