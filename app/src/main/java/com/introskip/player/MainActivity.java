@@ -98,6 +98,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private SeekBar videoProgressBar;
     private TextView videoProgressText;
     private LinearLayout rootLayout;
+    private LinearLayout bottomNavBar;
+    private Button bottomVideoButton;
+    private Button bottomPlaylistButton;
+    private Button bottomDownloadsButton;
+    private Button bottomHistoryButton;
+    private Button bottomMoreButton;
     private View playerSection;
     private View playlistSection;
     private View historySection;
@@ -256,13 +262,22 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int text = Color.rgb(244, 247, 251);
         int muted = Color.rgb(170, 180, 194);
 
+        LinearLayout screenLayout = new LinearLayout(this);
+        screenLayout.setOrientation(LinearLayout.VERTICAL);
+        screenLayout.setBackgroundColor(bg);
+
         mainScrollView = new ScrollView(this);
         mainScrollView.setFillViewport(true);
         mainScrollView.setBackgroundColor(bg);
+        screenLayout.addView(mainScrollView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1
+        ));
 
         rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setPadding(dp(14), dp(18), dp(14), dp(28));
+        rootLayout.setPadding(dp(14), dp(18), dp(14), dp(22));
         mainScrollView.addView(rootLayout, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT
@@ -273,7 +288,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         TextView subtitle = text("Choose downloaded videos, set the intro skip time, then play in the background.", 14, muted, false);
         subtitle.setPadding(0, dp(4), 0, dp(14));
         rootLayout.addView(subtitle);
-        addSectionShortcuts();
 
         videoContainer = new FrameLayout(this);
         playerSection = videoContainer;
@@ -521,33 +535,77 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         debugPanel.addView(refreshDebug, fullParams());
         rootLayout.addView(debugPanel);
 
-        setContentView(mainScrollView);
+        bottomNavBar = buildBottomNavigation();
+        screenLayout.addView(bottomNavBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(72)
+        ));
+        setBottomNavActive(bottomVideoButton);
+        setContentView(screenLayout);
     }
 
-    private void addSectionShortcuts() {
-        LinearLayout firstRow = row();
-        Button player = secondaryButton("Player");
-        Button playlist = secondaryButton("Playlist");
-        Button downloads = secondaryButton("Downloads");
-        player.setOnClickListener(v -> scrollToSection(playerSection));
-        playlist.setOnClickListener(v -> scrollToSection(playlistSection));
-        downloads.setOnClickListener(v -> scrollToSection(downloadsSection));
-        firstRow.addView(player, weightParams());
-        firstRow.addView(playlist, weightParams());
-        firstRow.addView(downloads, weightParams());
-        rootLayout.addView(firstRow);
+    private LinearLayout buildBottomNavigation() {
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setGravity(Gravity.CENTER);
+        nav.setPadding(dp(4), dp(6), dp(4), dp(6));
+        nav.setBackgroundResource(R.drawable.bottom_nav_bg);
 
-        LinearLayout secondRow = row();
-        Button history = secondaryButton("History");
-        Button settings = secondaryButton("Settings");
-        Button debug = secondaryButton("Debug");
-        history.setOnClickListener(v -> scrollToSection(historySection));
-        settings.setOnClickListener(v -> scrollToSection(settingsSection));
-        debug.setOnClickListener(v -> scrollToSection(debugSection));
-        secondRow.addView(history, weightParams());
-        secondRow.addView(settings, weightParams());
-        secondRow.addView(debug, weightParams());
-        rootLayout.addView(secondRow);
+        bottomVideoButton = bottomNavButton("Video");
+        bottomPlaylistButton = bottomNavButton("Playlist");
+        bottomDownloadsButton = bottomNavButton("Downloads");
+        bottomHistoryButton = bottomNavButton("History");
+        bottomMoreButton = bottomNavButton("More");
+
+        bottomVideoButton.setOnClickListener(v -> {
+            setBottomNavActive(bottomVideoButton);
+            scrollToSection(playerSection);
+        });
+        bottomPlaylistButton.setOnClickListener(v -> {
+            setBottomNavActive(bottomPlaylistButton);
+            scrollToSection(playlistSection);
+        });
+        bottomDownloadsButton.setOnClickListener(v -> {
+            setBottomNavActive(bottomDownloadsButton);
+            scrollToSection(downloadsSection);
+        });
+        bottomHistoryButton.setOnClickListener(v -> {
+            setBottomNavActive(bottomHistoryButton);
+            scrollToSection(historySection);
+        });
+        bottomMoreButton.setOnClickListener(v -> {
+            setBottomNavActive(bottomMoreButton);
+            scrollToSection(settingsSection);
+        });
+
+        nav.addView(bottomVideoButton, navParams());
+        nav.addView(bottomPlaylistButton, navParams());
+        nav.addView(bottomDownloadsButton, navParams());
+        nav.addView(bottomHistoryButton, navParams());
+        nav.addView(bottomMoreButton, navParams());
+        return nav;
+    }
+
+    private Button bottomNavButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(0, 0, 0, 0);
+        button.setMinHeight(dp(52));
+        button.setBackgroundColor(Color.TRANSPARENT);
+        return button;
+    }
+
+    private void setBottomNavActive(Button activeButton) {
+        Button[] buttons = {bottomVideoButton, bottomPlaylistButton, bottomDownloadsButton, bottomHistoryButton, bottomMoreButton};
+        for (Button button : buttons) {
+            if (button == null) continue;
+            boolean active = button == activeButton;
+            button.setTextColor(active ? Color.rgb(255, 152, 0) : Color.rgb(170, 180, 194));
+            button.setTypeface(active ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+        }
     }
 
     private void scrollToSection(View section) {
@@ -562,7 +620,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.2\n"
+                "Version: 2.3\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1215,8 +1273,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 fullscreen ? 0 : dp(14),
                 fullscreen ? 0 : dp(18),
                 fullscreen ? 0 : dp(14),
-                fullscreen ? 0 : dp(28)
+                fullscreen ? 0 : dp(22)
         );
+        if (bottomNavBar != null) {
+            bottomNavBar.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        }
 
         if (fullscreen) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -1280,8 +1341,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 inPictureInPicture || videoFullscreen ? 0 : dp(14),
                 inPictureInPicture || videoFullscreen ? 0 : dp(18),
                 inPictureInPicture || videoFullscreen ? 0 : dp(14),
-                inPictureInPicture || videoFullscreen ? 0 : dp(28)
+                inPictureInPicture || videoFullscreen ? 0 : dp(22)
         );
+        if (bottomNavBar != null) {
+            bottomNavBar.setVisibility(inPictureInPicture || videoFullscreen ? View.GONE : View.VISIBLE);
+        }
         videoContainer.post(this::applyVideoAspectTransform);
         if (!inPictureInPicture) {
             applyOrientationFullscreen();
@@ -1898,6 +1962,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 1
         );
         params.setMargins(dp(4), 0, dp(4), 0);
+        return params;
+    }
+
+    private LinearLayout.LayoutParams navParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1
+        );
+        params.setMargins(dp(1), 0, dp(1), 0);
         return params;
     }
 
