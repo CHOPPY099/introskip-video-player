@@ -208,6 +208,15 @@ public class BackgroundPlayerService extends Service {
         notifyChanged();
     }
 
+    public void seekBy(int deltaMs) {
+        if (player == null || !prepared) return;
+        int duration = Math.max(0, player.getDuration());
+        int target = Math.max(0, Math.min(duration, player.getCurrentPosition() + deltaMs));
+        player.seekTo(target);
+        updatePlaybackState();
+        notifyChanged();
+    }
+
     public boolean isAutoplayNext() {
         return autoplayNext;
     }
@@ -291,6 +300,9 @@ public class BackgroundPlayerService extends Service {
         try {
             player.setDataSource(this, playlist.get(currentIndex).uri);
             updateMetadata();
+            if (shouldPlay) {
+                enterForeground();
+            }
             player.prepareAsync();
             updateNotification();
             updatePlaybackState();
@@ -385,7 +397,11 @@ public class BackgroundPlayerService extends Service {
     }
 
     private void enterForeground() {
-        startForeground(NOTIFICATION_ID, buildNotification());
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification());
+        } catch (SecurityException ignored) {
+            // If notification permission is denied, keep playback available inside the app.
+        }
     }
 
     private void updateNotification() {

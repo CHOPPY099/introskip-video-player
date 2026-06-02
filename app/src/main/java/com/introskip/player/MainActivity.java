@@ -19,10 +19,13 @@ import android.provider.MediaStore;
 import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.GestureDetector;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -41,8 +44,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
+    private boolean videoFullscreen = false;
     private TextureView textureView;
     private Surface playbackSurface;
+    private GestureDetector videoGestureDetector;
+    private LinearLayout rootLayout;
     private TextView nowPlayingText;
     private TextView counterText;
     private Button playPauseButton;
@@ -77,7 +83,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         super.onCreate(savedInstanceState);
         buildUi();
         Intent serviceIntent = new Intent(this, BackgroundPlayerService.class);
-        startService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
         requestNeededPermissions();
     }
@@ -139,19 +144,19 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(bg);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(14), dp(18), dp(14), dp(28));
-        scrollView.addView(root, new ScrollView.LayoutParams(
+        rootLayout = new LinearLayout(this);
+        rootLayout.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.setPadding(dp(14), dp(18), dp(14), dp(28));
+        scrollView.addView(rootLayout, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT
         ));
 
         TextView title = text("IntroSkip Player", 26, text, true);
-        root.addView(title);
+        rootLayout.addView(title);
         TextView subtitle = text("Choose downloaded videos, set the intro skip time, then play in the background.", 14, muted, false);
         subtitle.setPadding(0, dp(4), 0, dp(14));
-        root.addView(subtitle);
+        rootLayout.addView(subtitle);
 
         textureView = new TextureView(this);
         LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(
@@ -159,7 +164,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 dp(210)
         );
         textureView.setBackgroundColor(Color.BLACK);
-        root.addView(textureView, videoParams);
+        rootLayout.addView(textureView, videoParams);
+        setupVideoGestures();
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
@@ -190,7 +196,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         LinearLayout nowPanel = panel();
         nowPanel.setPadding(dp(12), dp(12), dp(12), dp(12));
         nowPanel.setOrientation(LinearLayout.VERTICAL);
-        root.addView(nowPanel);
+        rootLayout.addView(nowPanel);
 
         nowPlayingText = text("Nothing loaded", 18, text, true);
         counterText = text("0 / 0", 13, muted, false);
@@ -206,7 +212,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         });
         playPauseButton.setOnClickListener(v -> {
             if (playerService == null) return;
-            if (playerService.isPlaying()) playerService.pause(); else playerService.play();
+            if (playerService.isPlaying()) {
+                playerService.pause();
+            } else {
+                if (playerService.getPlaylist().isEmpty()) return;
+                startPlaybackServiceIfNeeded();
+                playerService.play();
+            }
         });
         nextButton.setOnClickListener(v -> {
             if (playerService != null) playerService.next();
@@ -214,12 +226,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         transport.addView(previousButton, weightParams());
         transport.addView(playPauseButton, weightParams());
         transport.addView(nextButton, weightParams());
-        root.addView(transport);
+        rootLayout.addView(transport);
 
         LinearLayout options = panel();
         options.setOrientation(LinearLayout.VERTICAL);
         options.setPadding(dp(12), dp(12), dp(12), dp(12));
-        root.addView(options);
+        rootLayout.addView(options);
 
         TextView skipTitle = text("Start every video after", 16, text, true);
         options.addView(skipTitle);
@@ -259,7 +271,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         scanButton.setOnClickListener(v -> loadLibraryVideos());
         actions.addView(pickButton, weightParams());
         actions.addView(scanButton, weightParams());
-        root.addView(actions);
+        rootLayout.addView(actions);
 
         searchInput = input("");
         searchInput.setHint("Search phone videos...");
@@ -269,20 +281,20 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 refreshLibrary();
             }
         });
-        root.addView(searchInput, fullParams());
+        rootLayout.addView(searchInput, fullParams());
 
         TextView libraryTitle = sectionTitle("Phone videos");
-        root.addView(libraryTitle);
+        rootLayout.addView(libraryTitle);
         libraryList = new LinearLayout(this);
         libraryList.setOrientation(LinearLayout.VERTICAL);
-        root.addView(libraryList);
+        rootLayout.addView(libraryList);
 
-        TextView playlistTitle = sectionTitle("Playlist");
+        TextView playlistTitle = sectionTitle("Playlist - play order");
         playlistTitle.setPadding(0, dp(18), 0, dp(8));
-        root.addView(playlistTitle);
+        rootLayout.addView(playlistTitle);
         playlistList = new LinearLayout(this);
         playlistList.setOrientation(LinearLayout.VERTICAL);
-        root.addView(playlistList);
+        rootLayout.addView(playlistList);
 
         setContentView(scrollView);
     }
@@ -303,6 +315,78 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             loadLibraryVideos();
         } else {
             requestPermissions(permissions.toArray(new String[0]), REQUEST_PERMISSIONS);
+        }
+    }
+
+    private void setupVideoGestures() {
+        videoGestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(MotionEvent event) {
+                float x = event.getX();
+                int width = Math.max(1, textureView.getWidth());
+                if (x < width / 3f) {
+                    if (playerService != null) playerService.seekBy(-10000);
+                } else if (x > width * 2f / 3f) {
+                    if (playerService != null) playerService.seekBy(10000);
+                } else {
+                    setVideoFullscreen(!videoFullscreen);
+                }
+                return true;
+            }
+
+            @Override
+            public boolean onDown(MotionEvent event) {
+                return true;
+            }
+        });
+
+        textureView.setOnTouchListener((view, event) -> videoGestureDetector.onTouchEvent(event));
+    }
+
+    private void setVideoFullscreen(boolean fullscreen) {
+        videoFullscreen = fullscreen;
+        int height = fullscreen ? getResources().getDisplayMetrics().heightPixels : dp(210);
+        textureView.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                height
+        ));
+
+        for (int i = 0; i < rootLayout.getChildCount(); i++) {
+            View child = rootLayout.getChildAt(i);
+            if (child != textureView) {
+                child.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+            }
+        }
+
+        rootLayout.setPadding(
+                fullscreen ? 0 : dp(14),
+                fullscreen ? 0 : dp(18),
+                fullscreen ? 0 : dp(14),
+                fullscreen ? 0 : dp(28)
+        );
+
+        if (fullscreen) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            textureView.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            );
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            textureView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+    }
+
+    private void startPlaybackServiceIfNeeded() {
+        Intent serviceIntent = new Intent(this, BackgroundPlayerService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
         }
     }
 
@@ -427,7 +511,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int shown = 0;
         for (VideoItem item : libraryVideos) {
             if (!query.isEmpty() && !item.name.toLowerCase(Locale.US).contains(query)) continue;
-            libraryList.addView(videoRow(item, "Add", false, v -> {
+            libraryList.addView(videoRow(item, "Add", false, "", v -> {
                 if (playerService != null) {
                     playerService.addToPlaylist(item);
                     refreshPlaylist();
@@ -455,8 +539,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             int index = i;
             VideoItem item = playlist.get(i);
             boolean watched = playerService.isWatched(item);
-            LinearLayout row = videoRow(item, index == current ? "Playing" : "Play", watched, v -> {
-                if (playerService != null) playerService.playIndex(index);
+            LinearLayout row = videoRow(item, index == current ? "Playing" : "Play", watched, (index + 1) + ". ", v -> {
+                if (playerService != null) {
+                    startPlaybackServiceIfNeeded();
+                    playerService.playIndex(index);
+                }
             });
             Button remove = secondaryButton("Remove");
             remove.setOnClickListener(v -> {
@@ -468,7 +555,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshPlayerHeader();
     }
 
-    private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, View.OnClickListener action) {
+    private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, String prefix, View.OnClickListener action) {
         LinearLayout row = panel();
         if (watched) {
             row.setBackgroundResource(R.drawable.panel_watched_bg);
@@ -478,7 +565,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
         LinearLayout textBlock = new LinearLayout(this);
         textBlock.setOrientation(LinearLayout.VERTICAL);
-        TextView name = text(item.name, 15, watched ? Color.rgb(158, 166, 176) : Color.rgb(244, 247, 251), true);
+        TextView name = text(prefix + item.name, 15, watched ? Color.rgb(158, 166, 176) : Color.rgb(244, 247, 251), true);
         TextView meta = text(watched ? "Watched - " + formatMeta(item) : formatMeta(item), 12, Color.rgb(170, 180, 194), false);
         textBlock.addView(name);
         textBlock.addView(meta);
