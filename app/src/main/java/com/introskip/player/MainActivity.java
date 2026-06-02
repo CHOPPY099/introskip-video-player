@@ -71,6 +71,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private static final String KEY_WATCHED = "watched";
     private static final String KEY_SKIP_MINUTES = "skip_minutes";
     private static final String KEY_SKIP_SECONDS = "skip_seconds";
+    private static final String KEY_ACTIVE_TAB = "active_tab";
+    private static final String KEY_PLAYLIST_DETAIL_OPEN = "playlist_detail_open";
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
@@ -177,6 +179,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        loadNavigationState();
         buildUi();
         loadStoredPlaylists();
         Intent serviceIntent = new Intent(this, BackgroundPlayerService.class);
@@ -190,12 +193,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         super.onResume();
         activityResumed = true;
         applyOrientationFullscreen();
+        applyBottomTabVisibility();
+        reloadPlaylistSourceLinks();
+        updateSourceInputForCurrentPlaylist();
         updateScreenAwakeState();
     }
 
     @Override
     protected void onPause() {
         activityResumed = false;
+        saveNavigationState();
         clearScreenAwakeState();
         super.onPause();
     }
@@ -219,6 +226,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         saveAllPlaylists();
         saveHistory();
         saveSkipTime();
+        saveNavigationState();
         progressHandler.removeCallbacks(progressTicker);
         clearScreenAwakeState();
         if (playerService != null) {
@@ -474,6 +482,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         Button backToPlaylistsButton = secondaryButton("Back to playlists");
         backToPlaylistsButton.setOnClickListener(v -> {
             playlistDetailOpen = false;
+            saveNavigationState();
             applyBottomTabVisibility();
         });
         playlistControls.addView(backToPlaylistsButton, fullParams());
@@ -603,7 +612,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         ));
         setContentView(screenLayout);
         applySystemBarPadding(screenLayout);
-        showBottomTab("video", bottomVideoButton);
+        showBottomTab(activeBottomTab, bottomButtonForTab(activeBottomTab));
     }
 
     private LinearLayout buildBottomNavigation() {
@@ -638,11 +647,43 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void showBottomTab(String tab, Button activeButton) {
         activeBottomTab = tab;
+        if (!"playlist".equals(activeBottomTab)) {
+            playlistDetailOpen = false;
+        }
         setBottomNavActive(activeButton);
         applyBottomTabVisibility();
+        saveNavigationState();
         if (mainScrollView != null) {
             mainScrollView.post(() -> mainScrollView.smoothScrollTo(0, 0));
         }
+    }
+
+    private Button bottomButtonForTab(String tab) {
+        if ("playlist".equals(tab)) return bottomPlaylistButton;
+        if ("downloads".equals(tab)) return bottomDownloadsButton;
+        if ("history".equals(tab)) return bottomHistoryButton;
+        if ("more".equals(tab)) return bottomMoreButton;
+        return bottomVideoButton;
+    }
+
+    private void loadNavigationState() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        activeBottomTab = prefs.getString(KEY_ACTIVE_TAB, "video");
+        if (!"video".equals(activeBottomTab)
+                && !"playlist".equals(activeBottomTab)
+                && !"downloads".equals(activeBottomTab)
+                && !"history".equals(activeBottomTab)
+                && !"more".equals(activeBottomTab)) {
+            activeBottomTab = "video";
+        }
+        playlistDetailOpen = prefs.getBoolean(KEY_PLAYLIST_DETAIL_OPEN, false) && "playlist".equals(activeBottomTab);
+    }
+
+    private void saveNavigationState() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_ACTIVE_TAB, activeBottomTab)
+                .putBoolean(KEY_PLAYLIST_DETAIL_OPEN, playlistDetailOpen)
+                .apply();
     }
 
     private void applyBottomTabVisibility() {
@@ -724,7 +765,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.6\n"
+                "Version: 2.7\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -927,6 +968,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
         playlistDetailOpen = true;
+        saveNavigationState();
         refreshAll();
         showBottomTab("playlist", bottomPlaylistButton);
     }
@@ -941,6 +983,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
         playlistDetailOpen = false;
+        saveNavigationState();
         refreshAll();
     }
 
@@ -954,6 +997,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
         playlistDetailOpen = true;
+        saveNavigationState();
         refreshAll();
         showBottomTab("playlist", bottomPlaylistButton);
     }
@@ -998,8 +1042,28 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             sourceLinkInput.setText(target);
             saveCurrentSourceFromInput();
         }
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+        Intent intent = new Intent(this, WebSourceActivity.class);
+        intent.putExtra("playlist", currentPlaylistName);
+        intent.putExtra("url", target);
         startActivity(intent);
+    }
+
+    private void reloadPlaylistSourceLinks() {
+        playlistSourceLinks.clear();
+        try {
+            JSONObject sources = new JSONObject(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PLAYLIST_SOURCES, "{}"));
+            JSONArray names = sources.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String name = names.getString(i);
+                    String link = sources.optString(name, "");
+                    if (!link.trim().isEmpty()) {
+                        playlistSourceLinks.put(name, link.trim());
+                    }
+                }
+            }
+        } catch (JSONException ignored) {
+        }
     }
 
     private boolean isDynamicEpisodeSource(String link) {
@@ -1737,8 +1801,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         } catch (SecurityException ignored) {
         }
         String name = queryName(uri);
-        playerService.addToPlaylist(new VideoItem(uri, name, 0, 0));
-        saveActivePlaylistFromService();
+        askPlaylistForVideo(new VideoItem(uri, name, 0, 0));
     }
 
     private String queryName(Uri uri) {
@@ -1814,20 +1877,53 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int shown = 0;
         for (VideoItem item : libraryVideos) {
             if (!query.isEmpty() && !item.name.toLowerCase(Locale.US).contains(query)) continue;
-            libraryList.addView(videoRow(item, "Add", false, "", v -> {
-                if (playerService != null) {
-                    playerService.addToPlaylist(item);
-                    saveActivePlaylistFromService();
-                    refreshPlaylist();
-                    refreshPlaylistTabs();
-                }
-            }));
+            libraryList.addView(videoRow(item, "Add", false, "", v -> askPlaylistForVideo(item)));
             shown++;
             if (shown >= 120) break;
         }
         if (shown == 0) {
             libraryList.addView(emptyText("No scanned videos found. Use Pick videos to choose files manually."));
         }
+    }
+
+    private void askPlaylistForVideo(VideoItem item) {
+        if (item == null) return;
+        if (savedPlaylists.isEmpty()) {
+            savedPlaylists.put("Default", new ArrayList<>());
+        }
+        String[] names = savedPlaylists.keySet().toArray(new String[0]);
+        new AlertDialog.Builder(this)
+                .setTitle("Add to playlist")
+                .setItems(names, (dialog, which) -> addVideoToNamedPlaylist(names[which], item))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void addVideoToNamedPlaylist(String playlistName, VideoItem item) {
+        if (playlistName == null || item == null) return;
+        ArrayList<VideoItem> playlist = savedPlaylists.get(playlistName);
+        if (playlist == null) {
+            playlist = new ArrayList<>();
+            savedPlaylists.put(playlistName, playlist);
+        }
+
+        boolean added = false;
+        if (playlistName.equals(currentPlaylistName) && playerService != null) {
+            if (!playerService.getPlaylist().contains(item)) {
+                playerService.addToPlaylist(item);
+                added = true;
+            }
+            saveActivePlaylistFromService();
+        } else if (!playlist.contains(item)) {
+            playlist.add(item);
+            added = true;
+            saveAllPlaylists();
+        }
+
+        refreshPlaylist();
+        refreshPlaylistTabs();
+        refreshLibrary();
+        Toast.makeText(this, added ? "Added to " + playlistName : "Already in " + playlistName, Toast.LENGTH_SHORT).show();
     }
 
     private void refreshPlaylist() {
