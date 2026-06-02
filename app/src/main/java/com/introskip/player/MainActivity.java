@@ -110,6 +110,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private final ArrayList<View> downloadsPageViews = new ArrayList<>();
     private final ArrayList<View> historyPageViews = new ArrayList<>();
     private final ArrayList<View> morePageViews = new ArrayList<>();
+    private final ArrayList<View> playbackViews = new ArrayList<>();
+    private final ArrayList<View> settingsViews = new ArrayList<>();
     private final ArrayList<View> playlistHubViews = new ArrayList<>();
     private final ArrayList<View> playlistDetailViews = new ArrayList<>();
     private String activeBottomTab = "video";
@@ -312,6 +314,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         );
         rootLayout.addView(videoContainer, videoParams);
         videoPageViews.add(videoContainer);
+        playbackViews.add(videoContainer);
         videoContainer.addView(textureView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -352,6 +355,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         nowPanel.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(nowPanel);
         videoPageViews.add(nowPanel);
+        playbackViews.add(nowPanel);
 
         nowPlayingText = text("Nothing loaded", 18, text, true);
         counterText = text("0 / 0", 13, muted, false);
@@ -374,6 +378,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         transport.addView(nextButton, weightParams());
         rootLayout.addView(transport);
         videoPageViews.add(transport);
+        playbackViews.add(transport);
 
         LinearLayout options = panel();
         settingsSection = options;
@@ -381,6 +386,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         options.setPadding(dp(12), dp(12), dp(12), dp(12));
         rootLayout.addView(options);
         morePageViews.add(options);
+        settingsViews.add(options);
 
         TextView skipTitle = text("Start every video after", 16, text, true);
         options.addView(skipTitle);
@@ -646,13 +652,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         boolean downloadsActive = "downloads".equals(activeBottomTab);
         boolean historyActive = "history".equals(activeBottomTab);
         boolean moreActive = "more".equals(activeBottomTab);
+        boolean playlistDetailActive = playlistActive && playlistDetailOpen;
         setPageVisible(videoPageViews, videoActive);
         setPageVisible(playlistPageViews, playlistActive);
         setPageVisible(downloadsPageViews, downloadsActive);
         setPageVisible(historyPageViews, historyActive);
         setPageVisible(morePageViews, moreActive);
         setPageVisible(playlistHubViews, playlistActive && !playlistDetailOpen);
-        setPageVisible(playlistDetailViews, playlistActive && playlistDetailOpen);
+        setPageVisible(playlistDetailViews, playlistDetailActive);
+        setPageVisible(playbackViews, videoActive || playlistDetailActive);
+        setPageVisible(settingsViews, videoActive || playlistDetailActive || moreActive);
     }
 
     private void setPageVisible(ArrayList<View> pageViews, boolean visible) {
@@ -715,7 +724,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.5\n"
+                "Version: 2.6\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1847,6 +1856,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                     } else {
                         startPlaybackServiceIfNeeded();
                         playerService.playIndex(index);
+                        if (mainScrollView != null) {
+                            mainScrollView.post(() -> mainScrollView.smoothScrollTo(0, 0));
+                        }
                     }
                 }
             });
