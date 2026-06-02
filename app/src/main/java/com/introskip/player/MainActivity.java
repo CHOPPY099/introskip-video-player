@@ -57,6 +57,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private static final String KEY_CURRENT_PLAYLIST = "current_playlist";
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_WATCHED = "watched";
+    private static final String KEY_SKIP_MINUTES = "skip_minutes";
+    private static final String KEY_SKIP_SECONDS = "skip_seconds";
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
@@ -133,6 +135,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         saveActivePlaylistFromService();
         saveAllPlaylists();
         saveHistory();
+        saveSkipTime();
         progressHandler.removeCallbacks(progressTicker);
         if (playerService != null) {
             if (playbackSurface != null) {
@@ -283,8 +286,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         TextView skipTitle = text("Start every video after", 16, text, true);
         options.addView(skipTitle);
         LinearLayout timeRow = row();
-        minutesInput = input("3");
-        secondsInput = input("0");
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        minutesInput = input(String.valueOf(prefs.getInt(KEY_SKIP_MINUTES, 3)));
+        secondsInput = input(String.valueOf(prefs.getInt(KEY_SKIP_SECONDS, 0)));
         minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         timeRow.addView(labeledInput("Min", minutesInput), weightParams());
@@ -295,6 +299,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             @Override
             public void afterTextChanged(Editable editable) {
                 applySkipTime();
+                saveSkipTime();
             }
         };
         minutesInput.addTextChangedListener(timeWatcher);
@@ -703,6 +708,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         if (playerService != null) {
             playerService.setStartOffsetMs((minutes * 60 + seconds) * 1000);
         }
+    }
+
+    private void saveSkipTime() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(KEY_SKIP_MINUTES, parseBounded(minutesInput, 0, 999))
+                .putInt(KEY_SKIP_SECONDS, parseBounded(secondsInput, 0, 59))
+                .commit();
     }
 
     private int parseBounded(EditText editText, int min, int max) {

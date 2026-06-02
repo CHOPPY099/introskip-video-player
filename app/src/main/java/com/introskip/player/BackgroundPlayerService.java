@@ -172,6 +172,7 @@ public class BackgroundPlayerService extends Service {
             prepareCurrent(true);
             return;
         }
+        seekToStartPositionIfNeeded(player);
         markCurrentStarted();
         player.start();
         enterForeground();
@@ -205,12 +206,6 @@ public class BackgroundPlayerService extends Service {
 
     public void setStartOffsetMs(int startOffsetMs) {
         this.startOffsetMs = Math.max(0, startOffsetMs);
-        if (prepared && player != null) {
-            int duration = player.getDuration();
-            if (duration > this.startOffsetMs + 500) {
-                player.seekTo(this.startOffsetMs);
-            }
-        }
         notifyChanged();
     }
 
@@ -308,14 +303,7 @@ public class BackgroundPlayerService extends Service {
         player.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK);
         player.setOnPreparedListener(mp -> {
             prepared = true;
-            int duration = mp.getDuration();
-            VideoItem current = getCurrentItem();
-            int savedProgress = current == null ? 0 : getSavedProgressMs(current);
-            if (savedProgress > 0 && duration > savedProgress + 500) {
-                mp.seekTo(savedProgress);
-            } else if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
-                mp.seekTo(startOffsetMs);
-            }
+            seekToStartPositionIfNeeded(mp);
             if (playWhenPrepared) {
                 markCurrentStarted();
                 mp.start();
@@ -408,6 +396,17 @@ public class BackgroundPlayerService extends Service {
             progressByKey.put(key, duration);
         } else {
             progressByKey.put(key, position);
+        }
+    }
+
+    private void seekToStartPositionIfNeeded(MediaPlayer mp) {
+        int duration = Math.max(0, mp.getDuration());
+        VideoItem current = getCurrentItem();
+        int savedProgress = current == null ? 0 : getSavedProgressMs(current);
+        if (savedProgress > 0 && duration > savedProgress + 500) {
+            mp.seekTo(savedProgress);
+        } else if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
+            mp.seekTo(startOffsetMs);
         }
     }
 
