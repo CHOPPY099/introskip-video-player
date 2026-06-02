@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.media.AudioAttributes;
 import android.media.MediaMetadata;
 import android.media.MediaPlayer;
+import android.media.PlaybackParams;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Binder;
@@ -45,6 +46,7 @@ public class BackgroundPlayerService extends Service {
     private PlayerListener listener;
     private int currentIndex = -1;
     private int startOffsetMs = 180000;
+    private float playbackSpeed = 1f;
     private boolean autoplayNext = true;
     private boolean playWhenPrepared = false;
     private boolean prepared = false;
@@ -243,6 +245,16 @@ public class BackgroundPlayerService extends Service {
         notifyChanged();
     }
 
+    public void setPlaybackSpeed(float speed) {
+        playbackSpeed = Math.max(0.5f, Math.min(2f, speed));
+        applyPlaybackSpeed();
+        notifyChanged();
+    }
+
+    public float getPlaybackSpeed() {
+        return playbackSpeed;
+    }
+
     public void seekBy(int deltaMs) {
         if (player == null || !prepared) return;
         int duration = Math.max(0, player.getDuration());
@@ -361,6 +373,7 @@ public class BackgroundPlayerService extends Service {
         player.setOnPreparedListener(mp -> {
             prepared = true;
             seekToStartPositionIfNeeded(mp);
+            applyPlaybackSpeed();
             if (playWhenPrepared) {
                 markCurrentStarted();
                 mp.start();
@@ -465,6 +478,16 @@ public class BackgroundPlayerService extends Service {
             mp.seekTo(savedProgress);
         } else if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
             mp.seekTo(startOffsetMs);
+        }
+    }
+
+    private void applyPlaybackSpeed() {
+        if (player == null || !prepared || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        try {
+            PlaybackParams params = player.getPlaybackParams();
+            params.setSpeed(playbackSpeed);
+            player.setPlaybackParams(params);
+        } catch (IllegalStateException | IllegalArgumentException ignored) {
         }
     }
 

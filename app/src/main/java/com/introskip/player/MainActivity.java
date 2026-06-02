@@ -2,6 +2,7 @@ package com.introskip.player;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.content.ComponentName;
 import android.content.ContentUris;
@@ -80,8 +81,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private boolean inPictureInPicture = false;
     private boolean userDraggingVideoProgress = false;
     private boolean activityResumed = false;
+    private boolean controlsLocked = false;
     private long lastDragSeekMs = 0;
+    private String lastScanMessage = "No scan yet";
     private String currentPlaylistName = "Default";
+    private ScrollView mainScrollView;
     private FrameLayout videoContainer;
     private TextureView textureView;
     private Surface playbackSurface;
@@ -89,9 +93,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private LinearLayout videoControlsOverlay;
     private Button overlayPlayPauseButton;
     private Button overlayPipButton;
+    private Button overlayAudioButton;
+    private Button overlayLockButton;
     private SeekBar videoProgressBar;
     private TextView videoProgressText;
     private LinearLayout rootLayout;
+    private View playerSection;
+    private View playlistSection;
+    private View historySection;
+    private View downloadsSection;
+    private View settingsSection;
+    private View debugSection;
+    private TextView debugText;
     private TextView nowPlayingText;
     private TextView counterText;
     private Button playPauseButton;
@@ -243,14 +256,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int text = Color.rgb(244, 247, 251);
         int muted = Color.rgb(170, 180, 194);
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
-        scrollView.setBackgroundColor(bg);
+        mainScrollView = new ScrollView(this);
+        mainScrollView.setFillViewport(true);
+        mainScrollView.setBackgroundColor(bg);
 
         rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setPadding(dp(14), dp(18), dp(14), dp(28));
-        scrollView.addView(rootLayout, new ScrollView.LayoutParams(
+        mainScrollView.addView(rootLayout, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT
         ));
@@ -260,8 +273,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         TextView subtitle = text("Choose downloaded videos, set the intro skip time, then play in the background.", 14, muted, false);
         subtitle.setPadding(0, dp(4), 0, dp(14));
         rootLayout.addView(subtitle);
+        addSectionShortcuts();
 
         videoContainer = new FrameLayout(this);
+        playerSection = videoContainer;
         videoContainer.setBackgroundColor(Color.BLACK);
         textureView = new TextureView(this);
         LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(
@@ -331,6 +346,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         rootLayout.addView(transport);
 
         LinearLayout options = panel();
+        settingsSection = options;
         options.setOrientation(LinearLayout.VERTICAL);
         options.setPadding(dp(12), dp(12), dp(12), dp(12));
         rootLayout.addView(options);
@@ -368,6 +384,25 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         });
         options.addView(autoplayCheck);
 
+        options.addView(text("Playback speed", 13, muted, false));
+        LinearLayout speedRow = row();
+        float[] speeds = {0.75f, 1f, 1.25f, 1.5f, 2f};
+        for (float speed : speeds) {
+            Button speedButton = secondaryButton(speedText(speed));
+            speedButton.setOnClickListener(v -> setPlaybackSpeed(speed));
+            speedRow.addView(speedButton, weightParams());
+        }
+        options.addView(speedRow);
+
+        LinearLayout modeRow = row();
+        Button pipMode = secondaryButton("PiP video");
+        Button audioOnly = secondaryButton("Audio only");
+        pipMode.setOnClickListener(v -> enterVideoPictureInPicture());
+        audioOnly.setOnClickListener(v -> enterAudioOnlyMode());
+        modeRow.addView(pipMode, weightParams());
+        modeRow.addView(audioOnly, weightParams());
+        options.addView(modeRow);
+
         LinearLayout actions = row();
         Button pickButton = primaryButton("Pick videos");
         Button scanButton = secondaryButton("Scan phone");
@@ -378,6 +413,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         rootLayout.addView(actions);
 
         LinearLayout playlistControls = panel();
+        playlistSection = playlistControls;
         playlistControls.setOrientation(LinearLayout.VERTICAL);
         playlistControls.setPadding(dp(12), dp(12), dp(12), dp(12));
         playlistControls.addView(text("Playlists", 16, text, true));
@@ -419,6 +455,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         scanDownloadsButton.setOnClickListener(v -> scanDownloadsIntoCurrentPlaylist());
         playlistControls.addView(scanDownloadsButton, fullParams());
 
+        LinearLayout sortActions = row();
+        Button sortEpisode = secondaryButton("Sort episode");
+        Button sortName = secondaryButton("Sort name");
+        Button sortDate = secondaryButton("Sort downloaded");
+        sortEpisode.setOnClickListener(v -> sortPlaylist("episode"));
+        sortName.setOnClickListener(v -> sortPlaylist("name"));
+        sortDate.setOnClickListener(v -> sortPlaylist("date"));
+        sortActions.addView(sortEpisode, weightParams());
+        sortActions.addView(sortName, weightParams());
+        sortActions.addView(sortDate, weightParams());
+        playlistControls.addView(sortActions);
+
         playlistTabs = new LinearLayout(this);
         playlistTabs.setOrientation(LinearLayout.VERTICAL);
         playlistControls.addView(playlistTabs);
@@ -432,13 +480,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         rootLayout.addView(playlistList);
 
         TextView historyTitle = sectionTitle("History");
+        historySection = historyTitle;
         historyTitle.setPadding(0, dp(18), 0, dp(8));
         rootLayout.addView(historyTitle);
+        Button resetPlaylistHistory = secondaryButton("Reset current playlist history");
+        resetPlaylistHistory.setOnClickListener(v -> resetCurrentPlaylistHistory());
+        rootLayout.addView(resetPlaylistHistory, fullParams());
         historyList = new LinearLayout(this);
         historyList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(historyList);
 
         searchInput = input("");
+        downloadsSection = searchInput;
         searchInput.setHint("Search phone videos...");
         searchInput.addTextChangedListener(new SimpleTextWatcher() {
             @Override
@@ -454,7 +507,77 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         libraryList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(libraryList);
 
-        setContentView(scrollView);
+        TextView debugTitle = sectionTitle("Debug");
+        debugSection = debugTitle;
+        debugTitle.setPadding(0, dp(18), 0, dp(8));
+        rootLayout.addView(debugTitle);
+        LinearLayout debugPanel = panel();
+        debugPanel.setOrientation(LinearLayout.VERTICAL);
+        debugPanel.setPadding(dp(12), dp(12), dp(12), dp(12));
+        debugText = text("", 13, muted, false);
+        Button refreshDebug = secondaryButton("Refresh debug info");
+        refreshDebug.setOnClickListener(v -> refreshDebugInfo());
+        debugPanel.addView(debugText);
+        debugPanel.addView(refreshDebug, fullParams());
+        rootLayout.addView(debugPanel);
+
+        setContentView(mainScrollView);
+    }
+
+    private void addSectionShortcuts() {
+        LinearLayout firstRow = row();
+        Button player = secondaryButton("Player");
+        Button playlist = secondaryButton("Playlist");
+        Button downloads = secondaryButton("Downloads");
+        player.setOnClickListener(v -> scrollToSection(playerSection));
+        playlist.setOnClickListener(v -> scrollToSection(playlistSection));
+        downloads.setOnClickListener(v -> scrollToSection(downloadsSection));
+        firstRow.addView(player, weightParams());
+        firstRow.addView(playlist, weightParams());
+        firstRow.addView(downloads, weightParams());
+        rootLayout.addView(firstRow);
+
+        LinearLayout secondRow = row();
+        Button history = secondaryButton("History");
+        Button settings = secondaryButton("Settings");
+        Button debug = secondaryButton("Debug");
+        history.setOnClickListener(v -> scrollToSection(historySection));
+        settings.setOnClickListener(v -> scrollToSection(settingsSection));
+        debug.setOnClickListener(v -> scrollToSection(debugSection));
+        secondRow.addView(history, weightParams());
+        secondRow.addView(settings, weightParams());
+        secondRow.addView(debug, weightParams());
+        rootLayout.addView(secondRow);
+    }
+
+    private void scrollToSection(View section) {
+        if (mainScrollView == null || section == null) return;
+        mainScrollView.post(() -> mainScrollView.smoothScrollTo(0, section.getTop()));
+    }
+
+    private void refreshDebugInfo() {
+        if (debugText == null) return;
+        int playlistCount = playerService == null ? 0 : playerService.getPlaylist().size();
+        int libraryCount = libraryVideos.size();
+        int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
+        String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
+        debugText.setText(
+                "Version: 2.2\n"
+                        + "Current playlist: " + currentPlaylistName + "\n"
+                        + "Current video: " + current + "\n"
+                        + "Playlist videos: " + playlistCount + "\n"
+                        + "Phone videos scanned: " + libraryCount + "\n"
+                        + "History entries: " + historyCount + "\n"
+                        + "Media permission: " + mediaPermissionStatus() + "\n"
+                        + "Last scan: " + lastScanMessage
+        );
+    }
+
+    private String mediaPermissionStatus() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ? "Granted" : "Missing";
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ? "Granted" : "Missing";
     }
 
     private void requestNeededPermissions() {
@@ -764,23 +887,53 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             return episodeCompare != 0 ? episodeCompare : first.name.compareToIgnoreCase(second.name);
         });
 
+        refreshLibrary();
+        if (candidates.isEmpty()) {
+            lastScanMessage = minimumEpisode >= 0
+                    ? "No newer downloaded episodes found after episode " + minimumEpisode
+                    : "No new matching downloaded episodes found";
+            Toast.makeText(this, lastScanMessage, Toast.LENGTH_SHORT).show();
+            refreshDebugInfo();
+            return;
+        }
+        showScanPreview(candidates);
+    }
+
+    private void showScanPreview(ArrayList<VideoItem> candidates) {
+        StringBuilder message = new StringBuilder();
+        int limit = Math.min(20, candidates.size());
+        for (int i = 0; i < limit; i++) {
+            VideoItem item = candidates.get(i);
+            int episode = episodeNumber(item.name);
+            message.append(episode >= 0 ? "Episode " + episode + ": " : "")
+                    .append(item.name)
+                    .append('\n');
+        }
+        if (candidates.size() > limit) {
+            message.append("...and ").append(candidates.size() - limit).append(" more");
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Add downloaded episodes?")
+                .setMessage(message.toString())
+                .setPositiveButton("Add", (dialog, which) -> addScanCandidates(candidates))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void addScanCandidates(ArrayList<VideoItem> candidates) {
+        if (playerService == null) return;
         for (VideoItem item : candidates) {
             playerService.addToPlaylist(item);
         }
-        if (!candidates.isEmpty()) {
-            sortCurrentPlaylistByWatchOrder();
-            saveActivePlaylistFromService();
-        }
+        sortCurrentPlaylistByWatchOrder();
+        saveActivePlaylistFromService();
+        lastScanMessage = "Added " + candidates.size() + " downloaded episodes";
         refreshPlaylist();
         refreshPlaylistTabs();
         refreshLibrary();
-        Toast.makeText(
-                this,
-                candidates.isEmpty()
-                        ? (minimumEpisode >= 0 ? "No newer downloaded episodes found after episode " + minimumEpisode : "No new matching downloaded episodes found")
-                        : "Added " + candidates.size() + " downloaded episodes",
-                Toast.LENGTH_SHORT
-        ).show();
+        refreshDebugInfo();
+        Toast.makeText(this, lastScanMessage, Toast.LENGTH_SHORT).show();
     }
 
     private ArrayList<String> sourceTokensForCurrentPlaylist() {
@@ -881,6 +1034,52 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playerService.replacePlaylist(sorted);
     }
 
+    private void sortPlaylist(String mode) {
+        if (playerService == null) return;
+        List<VideoItem> sorted = playerService.getPlaylist();
+        if (sorted.size() < 2) return;
+        if ("name".equals(mode)) {
+            sorted.sort((first, second) -> first.name.compareToIgnoreCase(second.name));
+        } else if ("date".equals(mode)) {
+            reloadLibraryVideos();
+            sorted.sort((first, second) -> Integer.compare(libraryOrder(first), libraryOrder(second)));
+        } else {
+            sorted.sort((first, second) -> {
+                int firstEpisode = episodeNumber(first.name);
+                int secondEpisode = episodeNumber(second.name);
+                if (firstEpisode >= 0 && secondEpisode >= 0 && firstEpisode != secondEpisode) {
+                    return Integer.compare(firstEpisode, secondEpisode);
+                }
+                if (firstEpisode >= 0 && secondEpisode < 0) return -1;
+                if (firstEpisode < 0 && secondEpisode >= 0) return 1;
+                return first.name.compareToIgnoreCase(second.name);
+            });
+        }
+        playerService.replacePlaylist(sorted);
+        saveActivePlaylistFromService();
+        refreshPlaylist();
+        refreshDebugInfo();
+    }
+
+    private int libraryOrder(VideoItem target) {
+        for (int i = 0; i < libraryVideos.size(); i++) {
+            if (libraryVideos.get(i).equals(target)) return i;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private void movePlaylistItem(int fromIndex, int direction) {
+        if (playerService == null) return;
+        List<VideoItem> items = playerService.getPlaylist();
+        int toIndex = fromIndex + direction;
+        if (fromIndex < 0 || fromIndex >= items.size() || toIndex < 0 || toIndex >= items.size()) return;
+        VideoItem moved = items.remove(fromIndex);
+        items.add(toIndex, moved);
+        playerService.replacePlaylist(items);
+        saveActivePlaylistFromService();
+        refreshPlaylist();
+    }
+
     private void buildVideoOverlay(int textColor) {
         videoControlsOverlay = new LinearLayout(this);
         videoControlsOverlay.setOrientation(LinearLayout.HORIZONTAL);
@@ -898,6 +1097,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         overlayPipButton.setMinWidth(dp(70));
         overlayPipButton.setOnClickListener(v -> enterVideoPictureInPicture());
         videoControlsOverlay.addView(overlayPipButton);
+
+        overlayAudioButton = secondaryButton("Audio");
+        overlayAudioButton.setMinWidth(dp(82));
+        overlayAudioButton.setOnClickListener(v -> enterAudioOnlyMode());
+        videoControlsOverlay.addView(overlayAudioButton);
+
+        overlayLockButton = secondaryButton("Lock");
+        overlayLockButton.setMinWidth(dp(78));
+        overlayLockButton.setOnClickListener(v -> setControlsLocked(!controlsLocked));
+        videoControlsOverlay.addView(overlayLockButton);
 
         videoProgressBar = new SeekBar(this);
         videoProgressBar.setMax(0);
@@ -953,12 +1162,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         videoGestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onSingleTapConfirmed(MotionEvent event) {
+                if (controlsLocked) {
+                    setVideoControlsVisible(true);
+                    Toast.makeText(MainActivity.this, "Controls locked", Toast.LENGTH_SHORT).show();
+                    return true;
+                }
                 toggleVideoControls();
                 return true;
             }
 
             @Override
             public boolean onDoubleTap(MotionEvent event) {
+                if (controlsLocked) return true;
                 float x = event.getX();
                 int width = Math.max(1, videoContainer.getWidth());
                 if (x < width / 3f) {
@@ -1113,6 +1328,39 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         }
         updateVideoControls();
         updateScreenAwakeState();
+    }
+
+    private void setPlaybackSpeed(float speed) {
+        if (playerService == null) return;
+        playerService.setPlaybackSpeed(speed);
+        Toast.makeText(this, "Speed " + speedText(speed), Toast.LENGTH_SHORT).show();
+        refreshPlayerHeader();
+    }
+
+    private String speedText(float speed) {
+        if (Math.abs(speed - Math.round(speed)) < 0.01f) {
+            return String.format(Locale.US, "%.0fx", speed);
+        }
+        return String.format(Locale.US, "%.2fx", speed).replace("0x", "x");
+    }
+
+    private void enterAudioOnlyMode() {
+        setVideoControlsVisible(false);
+        moveTaskToBack(true);
+    }
+
+    private void setControlsLocked(boolean locked) {
+        controlsLocked = locked;
+        if (overlayLockButton != null) {
+            overlayLockButton.setText(locked ? "Unlock" : "Lock");
+        }
+        if (videoProgressBar != null) {
+            videoProgressBar.setEnabled(!locked);
+        }
+        if (overlayPlayPauseButton != null) {
+            overlayPlayPauseButton.setEnabled(!locked);
+        }
+        Toast.makeText(this, locked ? "Controls locked" : "Controls unlocked", Toast.LENGTH_SHORT).show();
     }
 
     private void toggleVideoControls() {
@@ -1304,6 +1552,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshLibrary();
         refreshPlaylist();
         refreshHistory();
+        refreshDebugInfo();
     }
 
     private void refreshPlayerHeader() {
@@ -1374,8 +1623,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                     refreshPlaylist();
                 }
             });
+            Button up = secondaryButton("Up");
+            up.setOnClickListener(v -> movePlaylistItem(index, -1));
+            Button down = secondaryButton("Down");
+            down.setOnClickListener(v -> movePlaylistItem(index, 1));
             Button reset = secondaryButton("Reset");
             reset.setOnClickListener(v -> resetVideoHistory(item));
+            row.addView(up);
+            row.addView(down);
             row.addView(reset);
             row.addView(remove);
             playlistList.addView(row);
@@ -1447,6 +1702,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshHistory();
         refreshLibrary();
         refreshPlayerHeader();
+    }
+
+    private void resetCurrentPlaylistHistory() {
+        if (playerService == null) return;
+        for (VideoItem item : playerService.getPlaylist()) {
+            playerService.clearHistory(item);
+        }
+        saveHistory();
+        refreshPlaylist();
+        refreshHistory();
+        refreshDebugInfo();
+        Toast.makeText(this, "Playlist history reset", Toast.LENGTH_SHORT).show();
     }
 
     private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, String prefix, View.OnClickListener action) {
