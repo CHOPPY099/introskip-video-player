@@ -39,6 +39,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -684,24 +685,36 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private String shiftEpisodeInLink(String link, int offset) {
-        Matcher matcher = Pattern.compile("(?i)(episode[-_/=]?)(\\d+)").matcher(link);
-        StringBuffer output = new StringBuffer();
-        boolean changed = false;
-        while (matcher.find()) {
-            int episode = parseInt(matcher.group(2), -1);
-            if (episode < 0) continue;
-            int shifted = Math.max(1, episode + offset);
-            matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(1) + shifted));
-            changed = true;
+        Matcher pathMatcher = Pattern.compile("(?i)(/episode-)(\\d+)(?=/?(?:[?#].*)?$)").matcher(link);
+        if (pathMatcher.find()) {
+            int episode = parseInt(pathMatcher.group(2), -1);
+            if (episode >= 0) {
+                int shifted = Math.max(1, episode + offset);
+                return link.substring(0, pathMatcher.start(2)) + shifted + link.substring(pathMatcher.end(2));
+            }
         }
-        if (!changed) return link;
-        matcher.appendTail(output);
-        return output.toString();
+
+        Matcher queryMatcher = Pattern.compile("(?i)([?&][^=]*episode[^=]*=)(\\d+)").matcher(link);
+        StringBuffer output = new StringBuffer();
+        boolean found = false;
+        while (queryMatcher.find()) {
+            int episode = parseInt(queryMatcher.group(2), -1);
+            if (episode >= 0) {
+                int shifted = Math.max(1, episode + offset);
+                queryMatcher.appendReplacement(output, Matcher.quoteReplacement(queryMatcher.group(1) + shifted));
+                found = true;
+            }
+        }
+        if (found) {
+            queryMatcher.appendTail(output);
+            return output.toString();
+        }
+        return link;
     }
 
     private void scanDownloadsIntoCurrentPlaylist() {
-        loadLibraryVideos();
         if (playerService == null) return;
+        reloadLibraryVideos();
         ArrayList<String> sourceTokens = sourceTokensForCurrentPlaylist();
         List<VideoItem> playlist = playerService.getPlaylist();
         ArrayList<String> playlistTokens = playlistTokens(playlist);
@@ -733,6 +746,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshPlaylist();
         refreshPlaylistTabs();
         refreshLibrary();
+        Toast.makeText(
+                this,
+                candidates.isEmpty() ? "No new matching downloaded episodes found" : "Added " + candidates.size() + " downloaded episodes",
+                Toast.LENGTH_SHORT
+        ).show();
     }
 
     private ArrayList<String> sourceTokensForCurrentPlaylist() {
@@ -765,10 +783,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private boolean matchesSeries(String fileName, ArrayList<String> sourceTokens, ArrayList<String> playlistTokens) {
         String normalized = normalizeForMatch(fileName);
         if (!sourceTokens.isEmpty()) {
+            int matches = 0;
             for (String token : sourceTokens) {
-                if (!normalized.contains(token)) return false;
+                if (normalized.contains(token)) matches++;
             }
-            return true;
+            return matches >= Math.min(3, sourceTokens.size());
         }
         if (playlistTokens.isEmpty()) return false;
         int matches = 0;
@@ -1055,6 +1074,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private void loadLibraryVideos() {
+        reloadLibraryVideos();
+        refreshLibrary();
+    }
+
+    private void reloadLibraryVideos() {
         libraryVideos.clear();
         Uri collection = Build.VERSION.SDK_INT >= 29
                 ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -1069,7 +1093,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
         try (Cursor cursor = getContentResolver().query(collection, projection, null, null, orderBy)) {
             if (cursor == null) {
-                refreshLibrary();
                 return;
             }
             int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID);
@@ -1088,7 +1111,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         } catch (SecurityException ignored) {
             // Permission was denied; users can still use Pick videos.
         }
-        refreshLibrary();
     }
 
     private void openVideoPicker() {
