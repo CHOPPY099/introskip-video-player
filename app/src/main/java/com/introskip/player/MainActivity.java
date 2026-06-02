@@ -7,6 +7,7 @@ import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -14,7 +15,9 @@ import android.graphics.SurfaceTexture;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.provider.MediaStore;
 import android.text.InputType;
 import android.text.Editable;
@@ -34,17 +37,34 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class MainActivity extends Activity implements BackgroundPlayerService.PlayerListener {
     private static final int REQUEST_PERMISSIONS = 100;
     private static final int REQUEST_PICK_VIDEOS = 101;
+    private static final String PREFS = "introskip_store";
+    private static final String KEY_PLAYLISTS = "playlists";
+    private static final String KEY_CURRENT_PLAYLIST = "current_playlist";
+    private static final String KEY_PROGRESS = "progress";
+    private static final String KEY_WATCHED = "watched";
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
+    private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
     private boolean videoFullscreen = false;
+    private String currentPlaylistName = "Default";
     private TextureView textureView;
     private Surface playbackSurface;
     private GestureDetector videoGestureDetector;
@@ -53,21 +73,41 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private TextView counterText;
     private Button playPauseButton;
     private EditText searchInput;
+    private EditText playlistNameInput;
     private EditText minutesInput;
     private EditText secondsInput;
     private CheckBox autoplayCheck;
+    private LinearLayout playlistTabs;
     private LinearLayout libraryList;
     private LinearLayout playlistList;
+    private LinearLayout historyList;
+
+    private final Runnable progressTicker = new Runnable() {
+        @Override
+        public void run() {
+            if (playerService != null) {
+                saveHistory();
+                refreshPlayerHeader();
+                refreshPlaylist();
+                refreshHistory();
+            }
+            progressHandler.postDelayed(this, 2500);
+        }
+    };
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             playerService = ((BackgroundPlayerService.LocalBinder) service).getService();
-            playerService.setListener(MainActivity.this);
             attachPlaybackSurface();
+            playerService.restoreHistory(loadProgress(), loadWatched());
+            loadCurrentPlaylistIntoService();
             playerService.setAutoplayNext(autoplayCheck.isChecked());
             applySkipTime();
+            playerService.setListener(MainActivity.this);
             serviceBound = true;
+            progressHandler.removeCallbacks(progressTicker);
+            progressHandler.postDelayed(progressTicker, 2500);
             refreshAll();
         }
 
@@ -82,6 +122,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        loadStoredPlaylists();
         Intent serviceIntent = new Intent(this, BackgroundPlayerService.class);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
         requestNeededPermissions();
@@ -89,6 +130,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     @Override
     protected void onDestroy() {
+        saveActivePlaylistFromService();
+        saveAllPlaylists();
+        saveHistory();
+        progressHandler.removeCallbacks(progressTicker);
         if (playerService != null) {
             if (playbackSurface != null) {
                 playerService.clearOutputSurface(playbackSurface);
@@ -105,8 +150,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     @Override
     public void onPlayerChanged() {
+        saveHistory();
         runOnUiThread(this::refreshPlaylist);
         runOnUiThread(this::refreshPlayerHeader);
+        runOnUiThread(this::refreshHistory);
     }
 
     @Override
@@ -131,6 +178,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         } else if (data.getData() != null) {
             addPickedVideo(data.getData());
         }
+        saveActivePlaylistFromService();
         refreshAll();
     }
 
@@ -163,7 +211,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(210)
         );
-        textureView.setBackgroundColor(Color.BLACK);
         rootLayout.addView(textureView, videoParams);
         setupVideoGestures();
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
@@ -273,6 +320,39 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         actions.addView(scanButton, weightParams());
         rootLayout.addView(actions);
 
+        LinearLayout playlistControls = panel();
+        playlistControls.setOrientation(LinearLayout.VERTICAL);
+        playlistControls.setPadding(dp(12), dp(12), dp(12), dp(12));
+        playlistControls.addView(text("Playlists", 16, text, true));
+        LinearLayout playlistEditRow = row();
+        playlistNameInput = input("Default");
+        Button openPlaylistButton = primaryButton("Open/Create");
+        Button deletePlaylistButton = secondaryButton("Delete");
+        openPlaylistButton.setOnClickListener(v -> openOrCreatePlaylist());
+        deletePlaylistButton.setOnClickListener(v -> deleteCurrentPlaylist());
+        playlistEditRow.addView(playlistNameInput, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        playlistEditRow.addView(openPlaylistButton);
+        playlistEditRow.addView(deletePlaylistButton);
+        playlistControls.addView(playlistEditRow);
+        playlistTabs = new LinearLayout(this);
+        playlistTabs.setOrientation(LinearLayout.VERTICAL);
+        playlistControls.addView(playlistTabs);
+        rootLayout.addView(playlistControls);
+
+        TextView playlistTitle = sectionTitle("Playlist - play order");
+        playlistTitle.setPadding(0, dp(18), 0, dp(8));
+        rootLayout.addView(playlistTitle);
+        playlistList = new LinearLayout(this);
+        playlistList.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.addView(playlistList);
+
+        TextView historyTitle = sectionTitle("History");
+        historyTitle.setPadding(0, dp(18), 0, dp(8));
+        rootLayout.addView(historyTitle);
+        historyList = new LinearLayout(this);
+        historyList.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.addView(historyList);
+
         searchInput = input("");
         searchInput.setHint("Search phone videos...");
         searchInput.addTextChangedListener(new SimpleTextWatcher() {
@@ -288,13 +368,6 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         libraryList = new LinearLayout(this);
         libraryList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(libraryList);
-
-        TextView playlistTitle = sectionTitle("Playlist - play order");
-        playlistTitle.setPadding(0, dp(18), 0, dp(8));
-        rootLayout.addView(playlistTitle);
-        playlistList = new LinearLayout(this);
-        playlistList.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.addView(playlistList);
 
         setContentView(scrollView);
     }
@@ -316,6 +389,159 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         } else {
             requestPermissions(permissions.toArray(new String[0]), REQUEST_PERMISSIONS);
         }
+    }
+
+    private void loadStoredPlaylists() {
+        savedPlaylists.clear();
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        currentPlaylistName = prefs.getString(KEY_CURRENT_PLAYLIST, "Default");
+        try {
+            JSONObject root = new JSONObject(prefs.getString(KEY_PLAYLISTS, "{}"));
+            JSONArray names = root.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String name = names.getString(i);
+                    JSONArray items = root.getJSONArray(name);
+                    ArrayList<VideoItem> playlist = new ArrayList<>();
+                    for (int j = 0; j < items.length(); j++) {
+                        playlist.add(videoFromJson(items.getJSONObject(j)));
+                    }
+                    savedPlaylists.put(name, playlist);
+                }
+            }
+        } catch (JSONException ignored) {
+        }
+
+        if (!savedPlaylists.containsKey(currentPlaylistName)) {
+            currentPlaylistName = "Default";
+        }
+        if (!savedPlaylists.containsKey("Default")) {
+            savedPlaylists.put("Default", new ArrayList<>());
+        }
+        playlistNameInput.setText(currentPlaylistName);
+        refreshPlaylistTabs();
+    }
+
+    private void loadCurrentPlaylistIntoService() {
+        if (playerService == null) return;
+        playerService.clearPlaylist();
+        ArrayList<VideoItem> playlist = savedPlaylists.get(currentPlaylistName);
+        if (playlist == null) return;
+        for (VideoItem item : playlist) {
+            playerService.addToPlaylist(item);
+        }
+    }
+
+    private void saveActivePlaylistFromService() {
+        if (playerService == null) return;
+        savedPlaylists.put(currentPlaylistName, new ArrayList<>(playerService.getPlaylist()));
+        saveAllPlaylists();
+    }
+
+    private void saveAllPlaylists() {
+        try {
+            JSONObject root = new JSONObject();
+            for (Map.Entry<String, ArrayList<VideoItem>> entry : savedPlaylists.entrySet()) {
+                JSONArray items = new JSONArray();
+                for (VideoItem item : entry.getValue()) {
+                    items.put(videoToJson(item));
+                }
+                root.put(entry.getKey(), items);
+            }
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(KEY_PLAYLISTS, root.toString())
+                    .putString(KEY_CURRENT_PLAYLIST, currentPlaylistName)
+                    .commit();
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private JSONObject videoToJson(VideoItem item) throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("uri", item.uri.toString());
+        json.put("name", item.name);
+        json.put("duration", item.durationMs);
+        json.put("size", item.sizeBytes);
+        return json;
+    }
+
+    private VideoItem videoFromJson(JSONObject json) throws JSONException {
+        return new VideoItem(
+                Uri.parse(json.getString("uri")),
+                json.optString("name", "Video"),
+                json.optLong("duration", 0),
+                json.optLong("size", 0)
+        );
+    }
+
+    private void saveHistory() {
+        if (playerService == null) return;
+        try {
+            JSONObject progress = new JSONObject();
+            for (Map.Entry<String, Integer> entry : playerService.getProgressSnapshot().entrySet()) {
+                progress.put(entry.getKey(), entry.getValue());
+            }
+            JSONArray watched = new JSONArray();
+            for (String key : playerService.getWatchedSnapshot()) {
+                watched.put(key);
+            }
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(KEY_PROGRESS, progress.toString())
+                    .putString(KEY_WATCHED, watched.toString())
+                    .commit();
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private Map<String, Integer> loadProgress() {
+        Map<String, Integer> progress = new HashMap<>();
+        try {
+            JSONObject json = new JSONObject(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PROGRESS, "{}"));
+            JSONArray names = json.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String key = names.getString(i);
+                    progress.put(key, json.optInt(key, 0));
+                }
+            }
+        } catch (JSONException ignored) {
+        }
+        return progress;
+    }
+
+    private Set<String> loadWatched() {
+        Set<String> watched = new HashSet<>();
+        try {
+            JSONArray json = new JSONArray(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_WATCHED, "[]"));
+            for (int i = 0; i < json.length(); i++) {
+                watched.add(json.getString(i));
+            }
+        } catch (JSONException ignored) {
+        }
+        return watched;
+    }
+
+    private void openOrCreatePlaylist() {
+        String name = playlistNameInput.getText().toString().trim();
+        if (name.isEmpty()) return;
+        saveActivePlaylistFromService();
+        if (!savedPlaylists.containsKey(name)) {
+            savedPlaylists.put(name, new ArrayList<>());
+        }
+        currentPlaylistName = name;
+        loadCurrentPlaylistIntoService();
+        saveAllPlaylists();
+        refreshAll();
+    }
+
+    private void deleteCurrentPlaylist() {
+        if (savedPlaylists.size() <= 1) return;
+        savedPlaylists.remove(currentPlaylistName);
+        currentPlaylistName = savedPlaylists.keySet().iterator().next();
+        playlistNameInput.setText(currentPlaylistName);
+        loadCurrentPlaylistIntoService();
+        saveAllPlaylists();
+        refreshAll();
     }
 
     private void setupVideoGestures() {
@@ -456,6 +682,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         }
         String name = queryName(uri);
         playerService.addToPlaylist(new VideoItem(uri, name, 0, 0));
+        saveActivePlaylistFromService();
     }
 
     private String queryName(Uri uri) {
@@ -491,8 +718,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void refreshAll() {
         refreshPlayerHeader();
+        refreshPlaylistTabs();
         refreshLibrary();
         refreshPlaylist();
+        refreshHistory();
     }
 
     private void refreshPlayerHeader() {
@@ -514,7 +743,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             libraryList.addView(videoRow(item, "Add", false, "", v -> {
                 if (playerService != null) {
                     playerService.addToPlaylist(item);
+                    saveActivePlaylistFromService();
                     refreshPlaylist();
+                    refreshPlaylistTabs();
                 }
             }));
             shown++;
@@ -539,20 +770,80 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             int index = i;
             VideoItem item = playlist.get(i);
             boolean watched = playerService.isWatched(item);
-            LinearLayout row = videoRow(item, index == current ? "Playing" : "Play", watched, (index + 1) + ". ", v -> {
+            String action = index == current && playerService.isPlaying() ? "Playing" : (index == current ? "Current" : "Play");
+            LinearLayout row = videoRow(item, action, watched, (index + 1) + ". ", v -> {
                 if (playerService != null) {
-                    startPlaybackServiceIfNeeded();
-                    playerService.playIndex(index);
+                    if (index == playerService.getCurrentIndex() && playerService.isPlaying()) {
+                        playerService.pause();
+                        saveHistory();
+                    } else {
+                        startPlaybackServiceIfNeeded();
+                        playerService.playIndex(index);
+                    }
                 }
             });
             Button remove = secondaryButton("Remove");
             remove.setOnClickListener(v -> {
-                if (playerService != null) playerService.removeFromPlaylist(index);
+                if (playerService != null) {
+                    playerService.removeFromPlaylist(index);
+                    saveActivePlaylistFromService();
+                    refreshPlaylist();
+                }
             });
             row.addView(remove);
             playlistList.addView(row);
         }
         refreshPlayerHeader();
+    }
+
+    private void refreshPlaylistTabs() {
+        if (playlistTabs == null) return;
+        playlistTabs.removeAllViews();
+        for (String name : savedPlaylists.keySet()) {
+            Button button = name.equals(currentPlaylistName)
+                    ? primaryButton(name)
+                    : secondaryButton(name);
+            button.setOnClickListener(v -> {
+                playlistNameInput.setText(name);
+                openOrCreatePlaylist();
+            });
+            playlistTabs.addView(button, fullParams());
+        }
+    }
+
+    private void refreshHistory() {
+        if (historyList == null) return;
+        historyList.removeAllViews();
+        if (playerService == null) {
+            historyList.addView(emptyText("History loads after the player starts."));
+            return;
+        }
+
+        LinkedHashMap<String, VideoItem> known = new LinkedHashMap<>();
+        for (ArrayList<VideoItem> playlist : savedPlaylists.values()) {
+            for (VideoItem item : playlist) known.put(item.key(), item);
+        }
+        for (VideoItem item : playerService.getPlaylist()) known.put(item.key(), item);
+        for (VideoItem item : libraryVideos) known.put(item.key(), item);
+
+        int shown = 0;
+        for (VideoItem item : known.values()) {
+            int progress = progressFor(item);
+            if (!playerService.isWatched(item) && progress <= 0) continue;
+            TextView line = text(
+                    (playerService.isWatched(item) ? "Watched - " : "Started - ") + item.name + " (" + progressLabel(item) + ")",
+                    13,
+                    Color.rgb(170, 180, 194),
+                    false
+            );
+            line.setPadding(dp(8), dp(5), dp(8), dp(5));
+            historyList.addView(line);
+            shown++;
+        }
+
+        if (shown == 0) {
+            historyList.addView(emptyText("No watched videos yet."));
+        }
     }
 
     private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, String prefix, View.OnClickListener action) {
@@ -578,13 +869,64 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private String formatMeta(VideoItem item) {
+        String progress = progressLabel(item);
         String duration = item.durationMs > 0
                 ? String.format(Locale.US, "%d:%02d", item.durationMs / 60000, (item.durationMs / 1000) % 60)
                 : "Picked file";
         String size = item.sizeBytes > 0
                 ? String.format(Locale.US, "%.1f MB", item.sizeBytes / 1024f / 1024f)
                 : "";
-        return size.isEmpty() ? duration : duration + " - " + size;
+        String base = size.isEmpty() ? duration : duration + " - " + size;
+        return progress.isEmpty() ? base : progress + " - " + base;
+    }
+
+    private String formatProgress(VideoItem item) {
+        int progress = progressFor(item);
+        int duration = durationFor(item);
+        if (progress <= 0) return "";
+        if (duration <= 0) return formatTime(progress);
+        return formatTime(progress) + " / " + formatTime(duration);
+    }
+
+    private String progressLabel(VideoItem item) {
+        String progress = formatProgress(item);
+        if (progress.isEmpty()) return "";
+        VideoItem current = playerService == null ? null : playerService.getCurrentItem();
+        if (current != null && current.key().equals(item.key()) && playerService.isPlaying()) {
+            return "Position " + progress;
+        }
+        return "Resume " + progress;
+    }
+
+    private int progressFor(VideoItem item) {
+        if (playerService == null || item == null) return 0;
+        VideoItem current = playerService.getCurrentItem();
+        if (current != null && current.key().equals(item.key()) && playerService.isPlaying()) {
+            return playerService.getCurrentPositionMs();
+        }
+        return playerService.getSavedProgressMs(item);
+    }
+
+    private int durationFor(VideoItem item) {
+        if (playerService != null) {
+            VideoItem current = playerService.getCurrentItem();
+            if (current != null && current.key().equals(item.key())) {
+                int duration = playerService.getDurationMs();
+                if (duration > 0) return duration;
+            }
+        }
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(0, item.durationMs));
+    }
+
+    private String formatTime(int millis) {
+        int totalSeconds = Math.max(0, millis / 1000);
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds);
+        }
+        return String.format(Locale.US, "%d:%02d", minutes, seconds);
     }
 
     private TextView emptyText(String value) {

@@ -20,8 +20,10 @@ import android.view.Surface;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class BackgroundPlayerService extends Service {
@@ -35,6 +37,8 @@ public class BackgroundPlayerService extends Service {
     private final IBinder binder = new LocalBinder();
     private final ArrayList<VideoItem> playlist = new ArrayList<>();
     private final Set<String> watchedKeys = new HashSet<>();
+    private final Set<String> startedKeys = new HashSet<>();
+    private final Map<String, Integer> progressByKey = new HashMap<>();
     private MediaPlayer player;
     private MediaSession mediaSession;
     private Surface outputSurface;
@@ -131,6 +135,7 @@ public class BackgroundPlayerService extends Service {
 
     public void removeFromPlaylist(int index) {
         if (index < 0 || index >= playlist.size()) return;
+        snapshotCurrentProgress();
         boolean removingCurrent = index == currentIndex;
         playlist.remove(index);
         if (playlist.isEmpty()) {
@@ -146,6 +151,7 @@ public class BackgroundPlayerService extends Service {
     }
 
     public void clearPlaylist() {
+        snapshotCurrentProgress();
         playlist.clear();
         currentIndex = -1;
         resetPlayer();
@@ -154,6 +160,7 @@ public class BackgroundPlayerService extends Service {
 
     public void playIndex(int index) {
         if (index < 0 || index >= playlist.size()) return;
+        snapshotCurrentProgress();
         currentIndex = index;
         prepareCurrent(true);
     }
@@ -165,6 +172,7 @@ public class BackgroundPlayerService extends Service {
             prepareCurrent(true);
             return;
         }
+        markCurrentStarted();
         player.start();
         enterForeground();
         updatePlaybackState();
@@ -175,6 +183,7 @@ public class BackgroundPlayerService extends Service {
         if (player != null && prepared && player.isPlaying()) {
             player.pause();
         }
+        snapshotCurrentProgress();
         updatePlaybackState();
         updateNotification();
         notifyChanged();
@@ -182,12 +191,14 @@ public class BackgroundPlayerService extends Service {
 
     public void next() {
         if (playlist.isEmpty()) return;
+        snapshotCurrentProgress();
         currentIndex = currentIndex + 1 < playlist.size() ? currentIndex + 1 : 0;
         prepareCurrent(true);
     }
 
     public void previous() {
         if (playlist.isEmpty()) return;
+        snapshotCurrentProgress();
         currentIndex = currentIndex > 0 ? currentIndex - 1 : playlist.size() - 1;
         prepareCurrent(true);
     }
@@ -251,6 +262,46 @@ public class BackgroundPlayerService extends Service {
         notifyChanged();
     }
 
+    public int getCurrentPositionMs() {
+        if (player == null || !prepared) return 0;
+        return Math.max(0, player.getCurrentPosition());
+    }
+
+    public int getDurationMs() {
+        if (player == null || !prepared) {
+            VideoItem current = getCurrentItem();
+            return current == null ? 0 : (int) Math.min(Integer.MAX_VALUE, current.durationMs);
+        }
+        return Math.max(0, player.getDuration());
+    }
+
+    public int getSavedProgressMs(VideoItem item) {
+        if (item == null) return 0;
+        Integer value = progressByKey.get(item.key());
+        return value == null ? 0 : value;
+    }
+
+    public boolean hasSavedProgress(VideoItem item) {
+        return item != null && progressByKey.containsKey(item.key()) && getSavedProgressMs(item) > 0;
+    }
+
+    public Map<String, Integer> getProgressSnapshot() {
+        snapshotCurrentProgress();
+        return new HashMap<>(progressByKey);
+    }
+
+    public Set<String> getWatchedSnapshot() {
+        return new HashSet<>(watchedKeys);
+    }
+
+    public void restoreHistory(Map<String, Integer> progress, Set<String> watched) {
+        progressByKey.clear();
+        progressByKey.putAll(progress);
+        watchedKeys.clear();
+        watchedKeys.addAll(watched);
+        notifyChanged();
+    }
+
     private void ensurePlayer() {
         if (player != null) return;
         player = new MediaPlayer();
@@ -258,10 +309,15 @@ public class BackgroundPlayerService extends Service {
         player.setOnPreparedListener(mp -> {
             prepared = true;
             int duration = mp.getDuration();
-            if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
+            VideoItem current = getCurrentItem();
+            int savedProgress = current == null ? 0 : getSavedProgressMs(current);
+            if (savedProgress > 0 && duration > savedProgress + 500) {
+                mp.seekTo(savedProgress);
+            } else if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
                 mp.seekTo(startOffsetMs);
             }
             if (playWhenPrepared) {
+                markCurrentStarted();
                 mp.start();
                 enterForeground();
             }
@@ -324,6 +380,7 @@ public class BackgroundPlayerService extends Service {
     }
 
     private void stopPlayback() {
+        snapshotCurrentProgress();
         resetPlayer();
         stopSelf();
     }
@@ -332,6 +389,32 @@ public class BackgroundPlayerService extends Service {
         VideoItem current = getCurrentItem();
         if (current != null) {
             watchedKeys.add(current.key());
+            startedKeys.add(current.key());
+            progressByKey.put(current.key(), Math.max(0, getDurationMs()));
+        }
+    }
+
+    private void snapshotCurrentProgress() {
+        VideoItem current = getCurrentItem();
+        if (current == null || player == null || !prepared) return;
+        String key = current.key();
+        if (!startedKeys.contains(key) && !progressByKey.containsKey(key) && !watchedKeys.contains(key)) {
+            return;
+        }
+        int duration = Math.max(0, player.getDuration());
+        int position = Math.max(0, player.getCurrentPosition());
+        if (duration > 0 && position >= duration - 1200) {
+            watchedKeys.add(key);
+            progressByKey.put(key, duration);
+        } else {
+            progressByKey.put(key, position);
+        }
+    }
+
+    private void markCurrentStarted() {
+        VideoItem current = getCurrentItem();
+        if (current != null) {
+            startedKeys.add(current.key());
         }
     }
 
