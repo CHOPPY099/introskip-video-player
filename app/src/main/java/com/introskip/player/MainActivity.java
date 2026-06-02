@@ -32,6 +32,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.util.Rational;
 import android.widget.Button;
@@ -104,6 +105,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private Button bottomDownloadsButton;
     private Button bottomHistoryButton;
     private Button bottomMoreButton;
+    private final ArrayList<View> videoPageViews = new ArrayList<>();
+    private final ArrayList<View> playlistPageViews = new ArrayList<>();
+    private final ArrayList<View> downloadsPageViews = new ArrayList<>();
+    private final ArrayList<View> historyPageViews = new ArrayList<>();
+    private final ArrayList<View> morePageViews = new ArrayList<>();
+    private String activeBottomTab = "video";
     private View playerSection;
     private View playlistSection;
     private View historySection;
@@ -285,9 +292,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
         TextView title = text("IntroSkip Player", 26, text, true);
         rootLayout.addView(title);
+        videoPageViews.add(title);
         TextView subtitle = text("Choose downloaded videos, set the intro skip time, then play in the background.", 14, muted, false);
         subtitle.setPadding(0, dp(4), 0, dp(14));
         rootLayout.addView(subtitle);
+        videoPageViews.add(subtitle);
 
         videoContainer = new FrameLayout(this);
         playerSection = videoContainer;
@@ -298,6 +307,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 dp(210)
         );
         rootLayout.addView(videoContainer, videoParams);
+        videoPageViews.add(videoContainer);
         videoContainer.addView(textureView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -337,6 +347,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         nowPanel.setPadding(dp(12), dp(12), dp(12), dp(12));
         nowPanel.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(nowPanel);
+        videoPageViews.add(nowPanel);
 
         nowPlayingText = text("Nothing loaded", 18, text, true);
         counterText = text("0 / 0", 13, muted, false);
@@ -358,12 +369,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         transport.addView(playPauseButton, weightParams());
         transport.addView(nextButton, weightParams());
         rootLayout.addView(transport);
+        videoPageViews.add(transport);
 
         LinearLayout options = panel();
         settingsSection = options;
         options.setOrientation(LinearLayout.VERTICAL);
         options.setPadding(dp(12), dp(12), dp(12), dp(12));
         rootLayout.addView(options);
+        morePageViews.add(options);
 
         TextView skipTitle = text("Start every video after", 16, text, true);
         options.addView(skipTitle);
@@ -425,6 +438,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         actions.addView(pickButton, weightParams());
         actions.addView(scanButton, weightParams());
         rootLayout.addView(actions);
+        downloadsPageViews.add(actions);
 
         LinearLayout playlistControls = panel();
         playlistSection = playlistControls;
@@ -485,24 +499,30 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playlistTabs.setOrientation(LinearLayout.VERTICAL);
         playlistControls.addView(playlistTabs);
         rootLayout.addView(playlistControls);
+        playlistPageViews.add(playlistControls);
 
         TextView playlistTitle = sectionTitle("Playlist - play order");
         playlistTitle.setPadding(0, dp(18), 0, dp(8));
         rootLayout.addView(playlistTitle);
+        playlistPageViews.add(playlistTitle);
         playlistList = new LinearLayout(this);
         playlistList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(playlistList);
+        playlistPageViews.add(playlistList);
 
         TextView historyTitle = sectionTitle("History");
         historySection = historyTitle;
         historyTitle.setPadding(0, dp(18), 0, dp(8));
         rootLayout.addView(historyTitle);
+        historyPageViews.add(historyTitle);
         Button resetPlaylistHistory = secondaryButton("Reset current playlist history");
         resetPlaylistHistory.setOnClickListener(v -> resetCurrentPlaylistHistory());
         rootLayout.addView(resetPlaylistHistory, fullParams());
+        historyPageViews.add(resetPlaylistHistory);
         historyList = new LinearLayout(this);
         historyList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(historyList);
+        historyPageViews.add(historyList);
 
         searchInput = input("");
         downloadsSection = searchInput;
@@ -514,17 +534,21 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             }
         });
         rootLayout.addView(searchInput, fullParams());
+        downloadsPageViews.add(searchInput);
 
         TextView libraryTitle = sectionTitle("Phone videos");
         rootLayout.addView(libraryTitle);
+        downloadsPageViews.add(libraryTitle);
         libraryList = new LinearLayout(this);
         libraryList.setOrientation(LinearLayout.VERTICAL);
         rootLayout.addView(libraryList);
+        downloadsPageViews.add(libraryList);
 
         TextView debugTitle = sectionTitle("Debug");
         debugSection = debugTitle;
         debugTitle.setPadding(0, dp(18), 0, dp(8));
         rootLayout.addView(debugTitle);
+        morePageViews.add(debugTitle);
         LinearLayout debugPanel = panel();
         debugPanel.setOrientation(LinearLayout.VERTICAL);
         debugPanel.setPadding(dp(12), dp(12), dp(12), dp(12));
@@ -534,14 +558,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         debugPanel.addView(debugText);
         debugPanel.addView(refreshDebug, fullParams());
         rootLayout.addView(debugPanel);
+        morePageViews.add(debugPanel);
 
         bottomNavBar = buildBottomNavigation();
         screenLayout.addView(bottomNavBar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(72)
         ));
-        setBottomNavActive(bottomVideoButton);
         setContentView(screenLayout);
+        applySystemBarPadding(screenLayout);
+        showBottomTab("video", bottomVideoButton);
     }
 
     private LinearLayout buildBottomNavigation() {
@@ -557,26 +583,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         bottomHistoryButton = bottomNavButton("History");
         bottomMoreButton = bottomNavButton("More");
 
-        bottomVideoButton.setOnClickListener(v -> {
-            setBottomNavActive(bottomVideoButton);
-            scrollToSection(playerSection);
-        });
-        bottomPlaylistButton.setOnClickListener(v -> {
-            setBottomNavActive(bottomPlaylistButton);
-            scrollToSection(playlistSection);
-        });
-        bottomDownloadsButton.setOnClickListener(v -> {
-            setBottomNavActive(bottomDownloadsButton);
-            scrollToSection(downloadsSection);
-        });
-        bottomHistoryButton.setOnClickListener(v -> {
-            setBottomNavActive(bottomHistoryButton);
-            scrollToSection(historySection);
-        });
-        bottomMoreButton.setOnClickListener(v -> {
-            setBottomNavActive(bottomMoreButton);
-            scrollToSection(settingsSection);
-        });
+        bottomVideoButton.setOnClickListener(v -> showBottomTab("video", bottomVideoButton));
+        bottomPlaylistButton.setOnClickListener(v -> showBottomTab("playlist", bottomPlaylistButton));
+        bottomDownloadsButton.setOnClickListener(v -> showBottomTab("downloads", bottomDownloadsButton));
+        bottomHistoryButton.setOnClickListener(v -> showBottomTab("history", bottomHistoryButton));
+        bottomMoreButton.setOnClickListener(v -> showBottomTab("more", bottomMoreButton));
 
         nav.addView(bottomVideoButton, navParams());
         nav.addView(bottomPlaylistButton, navParams());
@@ -584,6 +595,50 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         nav.addView(bottomHistoryButton, navParams());
         nav.addView(bottomMoreButton, navParams());
         return nav;
+    }
+
+    private void showBottomTab(String tab, Button activeButton) {
+        activeBottomTab = tab;
+        setBottomNavActive(activeButton);
+        applyBottomTabVisibility();
+        if (mainScrollView != null) {
+            mainScrollView.post(() -> mainScrollView.smoothScrollTo(0, 0));
+        }
+    }
+
+    private void applyBottomTabVisibility() {
+        if (videoFullscreen || inPictureInPicture) return;
+        setPageVisible(videoPageViews, "video".equals(activeBottomTab));
+        setPageVisible(playlistPageViews, "playlist".equals(activeBottomTab));
+        setPageVisible(downloadsPageViews, "downloads".equals(activeBottomTab));
+        setPageVisible(historyPageViews, "history".equals(activeBottomTab));
+        setPageVisible(morePageViews, "more".equals(activeBottomTab));
+    }
+
+    private void setPageVisible(ArrayList<View> pageViews, boolean visible) {
+        for (View view : pageViews) {
+            view.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void applySystemBarPadding(View screenLayout) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT_WATCH || bottomNavBar == null) return;
+        screenLayout.setOnApplyWindowInsetsListener((view, insets) -> {
+            int bottomInset;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+            } else {
+                bottomInset = insets.getSystemWindowInsetBottom();
+            }
+            bottomNavBar.setPadding(dp(4), dp(6), dp(4), dp(6) + bottomInset);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(72) + bottomInset
+            );
+            bottomNavBar.setLayoutParams(params);
+            return insets;
+        });
+        screenLayout.requestApplyInsets();
     }
 
     private Button bottomNavButton(String label) {
@@ -620,7 +675,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.3\n"
+                "Version: 2.4\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1262,11 +1317,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 height
         ));
 
-        for (int i = 0; i < rootLayout.getChildCount(); i++) {
-            View child = rootLayout.getChildAt(i);
-            if (child != videoContainer) {
-                child.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (fullscreen) {
+            videoContainer.setVisibility(View.VISIBLE);
+            for (int i = 0; i < rootLayout.getChildCount(); i++) {
+                View child = rootLayout.getChildAt(i);
+                if (child != videoContainer) {
+                    child.setVisibility(View.GONE);
+                }
             }
+        } else {
+            applyBottomTabVisibility();
         }
 
         rootLayout.setPadding(
@@ -1326,11 +1386,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void applyPictureInPictureUi() {
         if (videoContainer == null || rootLayout == null) return;
-        for (int i = 0; i < rootLayout.getChildCount(); i++) {
-            View child = rootLayout.getChildAt(i);
-            if (child != videoContainer) {
-                child.setVisibility(inPictureInPicture ? View.GONE : View.VISIBLE);
+        if (inPictureInPicture) {
+            videoContainer.setVisibility(View.VISIBLE);
+            for (int i = 0; i < rootLayout.getChildCount(); i++) {
+                View child = rootLayout.getChildAt(i);
+                if (child != videoContainer) {
+                    child.setVisibility(View.GONE);
+                }
             }
+        } else {
+            applyBottomTabVisibility();
         }
         videoControlsOverlay.setVisibility(View.GONE);
         videoContainer.setLayoutParams(new LinearLayout.LayoutParams(
