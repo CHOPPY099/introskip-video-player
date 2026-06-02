@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111317" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="IntroSkip" />
+    <title>IntroSkip Video Player</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="player-panel" aria-label="Video player">
+        <header class="top-bar">
+          <div>
+            <p class="eyebrow">Local playlist</p>
+            <h1>IntroSkip Player</h1>
+          </div>
+          <label class="toggle">
+            <input id="autoplayNext" type="checkbox" checked />
+            <span>Auto next</span>
+          </label>
+        </header>
+
+        <div class="video-wrap">
+          <video id="videoPlayer" controls playsinline preload="metadata"></video>
+          <div id="emptyState" class="empty-state">
+            <strong>No video selected</strong>
+            <span>Add videos from your phone to build a playlist.</span>
+          </div>
+        </div>
+
+        <div class="now-playing">
+          <div>
+            <p class="label">Now playing</p>
+            <h2 id="currentTitle">Nothing loaded</h2>
+          </div>
+          <p id="counter" class="counter">0 / 0</p>
+        </div>
+
+        <div class="transport">
+          <button id="previousBtn" class="icon-button" type="button" aria-label="Previous video" title="Previous video">
+            <span aria-hidden="true">&lt;</span>
+          </button>
+          <button id="playPauseBtn" class="primary-button" type="button">Play</button>
+          <button id="nextBtn" class="icon-button" type="button" aria-label="Next video" title="Next video">
+            <span aria-hidden="true">&gt;</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="controls-panel" aria-label="Playlist controls">
+        <div class="action-row">
+          <label class="file-button">
+            <input id="videoInput" type="file" accept="video/*" multiple />
+            Add videos
+          </label>
+          <button id="clearBtn" class="ghost-button" type="button">Clear</button>
+        </div>
+
+        <div class="skip-card">
+          <div>
+            <p class="label">Start every video after</p>
+            <p class="hint">Use this to skip repeated intros.</p>
+          </div>
+          <div class="time-inputs" aria-label="Global start time">
+            <label>
+              <span>Min</span>
+              <input id="skipMinutes" type="number" min="0" max="999" inputmode="numeric" value="3" />
+            </label>
+            <label>
+              <span>Sec</span>
+              <input id="skipSeconds" type="number" min="0" max="59" inputmode="numeric" value="0" />
+            </label>
+          </div>
+        </div>
+
+        <label class="search-field">
+          <span>Search selected videos</span>
+          <input id="searchInput" type="search" placeholder="Type a video name..." autocomplete="off" />
+        </label>
+
+        <div class="playlist-header">
+          <h2>Playlist</h2>
+          <p id="playlistCount">0 videos</p>
+        </div>
+        <ol id="playlist" class="playlist" aria-label="Selected videos"></ol>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
