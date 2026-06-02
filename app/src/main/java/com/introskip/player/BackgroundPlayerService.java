@@ -264,6 +264,19 @@ public class BackgroundPlayerService extends Service {
         notifyChanged();
     }
 
+    public void clearHistory(VideoItem item) {
+        if (item == null) return;
+        String key = item.key();
+        watchedKeys.remove(key);
+        progressByKey.remove(key);
+        startedKeys.remove(key);
+        VideoItem current = getCurrentItem();
+        if (current != null && current.key().equals(key) && player != null && prepared) {
+            seekToStartPositionIfNeeded(player);
+        }
+        notifyChanged();
+    }
+
     public int getCurrentPositionMs() {
         if (player == null || !prepared) return 0;
         return Math.max(0, player.getCurrentPosition());

@@ -48,6 +48,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -58,6 +60,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private static final int REQUEST_PICK_VIDEOS = 101;
     private static final String PREFS = "introskip_store";
     private static final String KEY_PLAYLISTS = "playlists";
+    private static final String KEY_PLAYLIST_SOURCES = "playlist_sources";
     private static final String KEY_CURRENT_PLAYLIST = "current_playlist";
     private static final String KEY_PROGRESS = "progress";
     private static final String KEY_WATCHED = "watched";
@@ -66,6 +69,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
+    private final Map<String, String> playlistSourceLinks = new HashMap<>();
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
@@ -88,6 +92,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private Button playPauseButton;
     private EditText searchInput;
     private EditText playlistNameInput;
+    private EditText sourceLinkInput;
     private EditText minutesInput;
     private EditText secondsInput;
     private CheckBox autoplayCheck;
@@ -374,6 +379,34 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playlistEditRow.addView(openPlaylistButton);
         playlistEditRow.addView(deletePlaylistButton);
         playlistControls.addView(playlistEditRow);
+
+        playlistControls.addView(text("Source link", 13, muted, false));
+        sourceLinkInput = input("");
+        sourceLinkInput.setHint("Episode page link");
+        sourceLinkInput.addTextChangedListener(new SimpleTextWatcher() {
+            @Override
+            public void afterTextChanged(Editable editable) {
+                saveCurrentSourceFromInput();
+            }
+        });
+        playlistControls.addView(sourceLinkInput, fullParams());
+
+        LinearLayout sourceActions = row();
+        Button openSourceButton = primaryButton("Open source");
+        Button previousEpisodeButton = secondaryButton("Prev episode");
+        Button nextEpisodeButton = secondaryButton("Next episode");
+        openSourceButton.setOnClickListener(v -> openSourceEpisode(0));
+        previousEpisodeButton.setOnClickListener(v -> openSourceEpisode(-1));
+        nextEpisodeButton.setOnClickListener(v -> openSourceEpisode(1));
+        sourceActions.addView(openSourceButton, weightParams());
+        sourceActions.addView(previousEpisodeButton, weightParams());
+        sourceActions.addView(nextEpisodeButton, weightParams());
+        playlistControls.addView(sourceActions);
+
+        Button scanDownloadsButton = secondaryButton("Scan downloads into playlist");
+        scanDownloadsButton.setOnClickListener(v -> scanDownloadsIntoCurrentPlaylist());
+        playlistControls.addView(scanDownloadsButton, fullParams());
+
         playlistTabs = new LinearLayout(this);
         playlistTabs.setOrientation(LinearLayout.VERTICAL);
         playlistControls.addView(playlistTabs);
@@ -433,6 +466,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void loadStoredPlaylists() {
         savedPlaylists.clear();
+        playlistSourceLinks.clear();
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         currentPlaylistName = prefs.getString(KEY_CURRENT_PLAYLIST, "Default");
         try {
@@ -451,6 +485,20 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             }
         } catch (JSONException ignored) {
         }
+        try {
+            JSONObject sources = new JSONObject(prefs.getString(KEY_PLAYLIST_SOURCES, "{}"));
+            JSONArray names = sources.names();
+            if (names != null) {
+                for (int i = 0; i < names.length(); i++) {
+                    String name = names.getString(i);
+                    String link = sources.optString(name, "");
+                    if (!link.trim().isEmpty()) {
+                        playlistSourceLinks.put(name, link.trim());
+                    }
+                }
+            }
+        } catch (JSONException ignored) {
+        }
 
         if (!savedPlaylists.containsKey(currentPlaylistName)) {
             currentPlaylistName = "Default";
@@ -459,6 +507,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             savedPlaylists.put("Default", new ArrayList<>());
         }
         playlistNameInput.setText(currentPlaylistName);
+        updateSourceInputForCurrentPlaylist();
         refreshPlaylistTabs();
     }
 
@@ -488,8 +537,15 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 }
                 root.put(entry.getKey(), items);
             }
+            JSONObject sources = new JSONObject();
+            for (Map.Entry<String, String> entry : playlistSourceLinks.entrySet()) {
+                if (!entry.getValue().trim().isEmpty()) {
+                    sources.put(entry.getKey(), entry.getValue().trim());
+                }
+            }
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putString(KEY_PLAYLISTS, root.toString())
+                    .putString(KEY_PLAYLIST_SOURCES, sources.toString())
                     .putString(KEY_CURRENT_PLAYLIST, currentPlaylistName)
                     .commit();
         } catch (JSONException ignored) {
@@ -565,10 +621,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         String name = playlistNameInput.getText().toString().trim();
         if (name.isEmpty()) return;
         saveActivePlaylistFromService();
+        saveCurrentSourceFromInput();
         if (!savedPlaylists.containsKey(name)) {
             savedPlaylists.put(name, new ArrayList<>());
         }
         currentPlaylistName = name;
+        updateSourceInputForCurrentPlaylist();
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
         refreshAll();
@@ -577,11 +635,170 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private void deleteCurrentPlaylist() {
         if (savedPlaylists.size() <= 1) return;
         savedPlaylists.remove(currentPlaylistName);
+        playlistSourceLinks.remove(currentPlaylistName);
         currentPlaylistName = savedPlaylists.keySet().iterator().next();
         playlistNameInput.setText(currentPlaylistName);
+        updateSourceInputForCurrentPlaylist();
         loadCurrentPlaylistIntoService();
         saveAllPlaylists();
         refreshAll();
+    }
+
+    private void updateSourceInputForCurrentPlaylist() {
+        if (sourceLinkInput == null) return;
+        String link = playlistSourceLinks.get(currentPlaylistName);
+        sourceLinkInput.setText(link == null ? "" : link);
+    }
+
+    private void saveCurrentSourceFromInput() {
+        if (sourceLinkInput == null) return;
+        String link = sourceLinkInput.getText().toString().trim();
+        if (link.isEmpty()) {
+            playlistSourceLinks.remove(currentPlaylistName);
+        } else {
+            playlistSourceLinks.put(currentPlaylistName, link);
+        }
+        saveAllPlaylists();
+    }
+
+    private String currentSourceLink() {
+        if (sourceLinkInput != null) {
+            String typed = sourceLinkInput.getText().toString().trim();
+            if (!typed.isEmpty()) return typed;
+        }
+        String saved = playlistSourceLinks.get(currentPlaylistName);
+        return saved == null ? "" : saved.trim();
+    }
+
+    private void openSourceEpisode(int offset) {
+        String link = currentSourceLink();
+        if (link.isEmpty()) return;
+        String target = offset == 0 ? link : shiftEpisodeInLink(link, offset);
+        if (target.isEmpty()) return;
+        if (!target.equals(link) && sourceLinkInput != null) {
+            sourceLinkInput.setText(target);
+            saveCurrentSourceFromInput();
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+        startActivity(intent);
+    }
+
+    private String shiftEpisodeInLink(String link, int offset) {
+        Matcher matcher = Pattern.compile("(?i)(episode[-_/=]?)(\\d+)").matcher(link);
+        StringBuffer output = new StringBuffer();
+        boolean changed = false;
+        while (matcher.find()) {
+            int episode = parseInt(matcher.group(2), -1);
+            if (episode < 0) continue;
+            int shifted = Math.max(1, episode + offset);
+            matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(1) + shifted));
+            changed = true;
+        }
+        if (!changed) return link;
+        matcher.appendTail(output);
+        return output.toString();
+    }
+
+    private void scanDownloadsIntoCurrentPlaylist() {
+        loadLibraryVideos();
+        if (playerService == null) return;
+        ArrayList<String> sourceTokens = sourceTokensForCurrentPlaylist();
+        List<VideoItem> playlist = playerService.getPlaylist();
+        ArrayList<String> playlistTokens = playlistTokens(playlist);
+        Set<String> existing = new HashSet<>();
+        for (VideoItem item : playlist) {
+            existing.add(item.key());
+        }
+
+        ArrayList<VideoItem> candidates = new ArrayList<>();
+        for (VideoItem item : libraryVideos) {
+            if (existing.contains(item.key())) continue;
+            int episode = episodeNumber(item.name);
+            if (episode < 0) continue;
+            if (matchesSeries(item.name, sourceTokens, playlistTokens)) {
+                candidates.add(item);
+            }
+        }
+        candidates.sort((first, second) -> {
+            int episodeCompare = Integer.compare(episodeNumber(first.name), episodeNumber(second.name));
+            return episodeCompare != 0 ? episodeCompare : first.name.compareToIgnoreCase(second.name);
+        });
+
+        for (VideoItem item : candidates) {
+            playerService.addToPlaylist(item);
+        }
+        if (!candidates.isEmpty()) {
+            saveActivePlaylistFromService();
+        }
+        refreshPlaylist();
+        refreshPlaylistTabs();
+        refreshLibrary();
+    }
+
+    private ArrayList<String> sourceTokensForCurrentPlaylist() {
+        ArrayList<String> tokens = new ArrayList<>();
+        String link = currentSourceLink();
+        if (link.isEmpty()) return tokens;
+        String segment = "";
+        try {
+            String path = Uri.parse(link).getPath();
+            if (path != null) {
+                for (String part : path.split("/")) {
+                    String normalized = part.toLowerCase(Locale.US);
+                    if (normalized.contains("-") && !normalized.startsWith("episode")) {
+                        segment = part;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        if (segment.isEmpty()) segment = link;
+        return significantTokens(segment);
+    }
+
+    private ArrayList<String> playlistTokens(List<VideoItem> playlist) {
+        if (playlist == null || playlist.isEmpty()) return new ArrayList<>();
+        return significantTokens(playlist.get(0).name);
+    }
+
+    private boolean matchesSeries(String fileName, ArrayList<String> sourceTokens, ArrayList<String> playlistTokens) {
+        String normalized = normalizeForMatch(fileName);
+        if (!sourceTokens.isEmpty()) {
+            for (String token : sourceTokens) {
+                if (!normalized.contains(token)) return false;
+            }
+            return true;
+        }
+        if (playlistTokens.isEmpty()) return false;
+        int matches = 0;
+        for (String token : playlistTokens) {
+            if (normalized.contains(token)) matches++;
+        }
+        return matches >= Math.min(3, playlistTokens.size());
+    }
+
+    private ArrayList<String> significantTokens(String value) {
+        ArrayList<String> tokens = new ArrayList<>();
+        for (String token : normalizeForMatch(value).split(" ")) {
+            if (token.length() < 2) continue;
+            if ("anime".equals(token) || "episode".equals(token) || "video".equals(token) || "mp4".equals(token)) continue;
+            if ("480".equals(token) || "720".equals(token) || "1080".equals(token)) continue;
+            if (!tokens.contains(token)) tokens.add(token);
+        }
+        return tokens;
+    }
+
+    private String normalizeForMatch(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", " ").trim();
+    }
+
+    private int episodeNumber(String value) {
+        Matcher matcher = Pattern.compile("(?i)(?:episode|ep)[^0-9]*(\\d+)").matcher(value == null ? "" : value);
+        if (matcher.find()) {
+            return parseInt(matcher.group(1), -1);
+        }
+        return -1;
     }
 
     private void buildVideoOverlay(int textColor) {
@@ -931,6 +1148,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         return Math.max(min, Math.min(max, value));
     }
 
+    private int parseInt(String raw, int fallback) {
+        try {
+            return raw == null ? fallback : Integer.parseInt(raw);
+        } catch (NumberFormatException error) {
+            return fallback;
+        }
+    }
+
     private void refreshAll() {
         refreshPlayerHeader();
         refreshPlaylistTabs();
@@ -1007,6 +1232,9 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                     refreshPlaylist();
                 }
             });
+            Button reset = secondaryButton("Reset");
+            reset.setOnClickListener(v -> resetVideoHistory(item));
+            row.addView(reset);
             row.addView(remove);
             playlistList.addView(row);
         }
@@ -1047,20 +1275,36 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         for (VideoItem item : known.values()) {
             int progress = progressFor(item);
             if (!playerService.isWatched(item) && progress <= 0) continue;
+            LinearLayout row = panel();
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(10), dp(8), dp(10), dp(8));
             TextView line = text(
                     (playerService.isWatched(item) ? "Watched - " : "Started - ") + item.name + " (" + progressLabel(item) + ")",
                     13,
                     Color.rgb(170, 180, 194),
                     false
             );
-            line.setPadding(dp(8), dp(5), dp(8), dp(5));
-            historyList.addView(line);
+            row.addView(line, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            Button reset = secondaryButton("Reset");
+            reset.setOnClickListener(v -> resetVideoHistory(item));
+            row.addView(reset);
+            historyList.addView(row);
             shown++;
         }
 
         if (shown == 0) {
             historyList.addView(emptyText("No watched videos yet."));
         }
+    }
+
+    private void resetVideoHistory(VideoItem item) {
+        if (playerService == null || item == null) return;
+        playerService.clearHistory(item);
+        saveHistory();
+        refreshPlaylist();
+        refreshHistory();
+        refreshLibrary();
+        refreshPlayerHeader();
     }
 
     private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, String prefix, View.OnClickListener action) {
