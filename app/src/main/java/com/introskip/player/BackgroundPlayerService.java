@@ -16,11 +16,13 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
-import android.view.SurfaceHolder;
+import android.view.Surface;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class BackgroundPlayerService extends Service {
     private static final String CHANNEL_ID = "playback";
@@ -32,9 +34,10 @@ public class BackgroundPlayerService extends Service {
 
     private final IBinder binder = new LocalBinder();
     private final ArrayList<VideoItem> playlist = new ArrayList<>();
+    private final Set<String> watchedKeys = new HashSet<>();
     private MediaPlayer player;
     private MediaSession mediaSession;
-    private SurfaceHolder surfaceHolder;
+    private Surface outputSurface;
     private PlayerListener listener;
     private int currentIndex = -1;
     private int startOffsetMs = 180000;
@@ -99,18 +102,18 @@ public class BackgroundPlayerService extends Service {
         notifyChanged();
     }
 
-    public void setSurfaceHolder(SurfaceHolder holder) {
-        surfaceHolder = holder;
+    public void setOutputSurface(Surface surface) {
+        outputSurface = surface;
         if (player != null) {
-            player.setDisplay(surfaceHolder);
+            player.setSurface(outputSurface);
         }
     }
 
-    public void clearSurfaceHolder(SurfaceHolder holder) {
-        if (surfaceHolder == holder) {
-            surfaceHolder = null;
+    public void clearOutputSurface(Surface surface) {
+        if (outputSurface == surface) {
+            outputSurface = null;
             if (player != null) {
-                player.setDisplay(null);
+                player.setSurface(null);
             }
         }
     }
@@ -230,6 +233,15 @@ public class BackgroundPlayerService extends Service {
         return playlist.get(currentIndex);
     }
 
+    public boolean isWatched(VideoItem item) {
+        return item != null && watchedKeys.contains(item.key());
+    }
+
+    public void clearWatched() {
+        watchedKeys.clear();
+        notifyChanged();
+    }
+
     private void ensurePlayer() {
         if (player != null) return;
         player = new MediaPlayer();
@@ -248,6 +260,7 @@ public class BackgroundPlayerService extends Service {
             notifyChanged();
         });
         player.setOnCompletionListener(mp -> {
+            markCurrentWatched();
             prepared = false;
             if (autoplayNext && playlist.size() > 1) {
                 next();
@@ -274,7 +287,7 @@ public class BackgroundPlayerService extends Service {
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
                 .build());
-        player.setDisplay(surfaceHolder);
+        player.setSurface(outputSurface);
         try {
             player.setDataSource(this, playlist.get(currentIndex).uri);
             updateMetadata();
@@ -301,6 +314,13 @@ public class BackgroundPlayerService extends Service {
     private void stopPlayback() {
         resetPlayer();
         stopSelf();
+    }
+
+    private void markCurrentWatched() {
+        VideoItem current = getCurrentItem();
+        if (current != null) {
+            watchedKeys.add(current.key());
+        }
     }
 
     private void setupMediaSession() {

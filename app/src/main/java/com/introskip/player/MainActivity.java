@@ -10,6 +10,7 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.SurfaceTexture;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,8 +20,8 @@ import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -40,7 +41,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private BackgroundPlayerService playerService;
     private boolean serviceBound = false;
-    private SurfaceView surfaceView;
+    private TextureView textureView;
+    private Surface playbackSurface;
     private TextView nowPlayingText;
     private TextView counterText;
     private Button playPauseButton;
@@ -56,7 +58,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         public void onServiceConnected(ComponentName name, IBinder service) {
             playerService = ((BackgroundPlayerService.LocalBinder) service).getService();
             playerService.setListener(MainActivity.this);
-            playerService.setSurfaceHolder(surfaceView.getHolder());
+            attachPlaybackSurface();
             playerService.setAutoplayNext(autoplayCheck.isChecked());
             applySkipTime();
             serviceBound = true;
@@ -83,9 +85,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     @Override
     protected void onDestroy() {
         if (playerService != null) {
-            playerService.clearSurfaceHolder(surfaceView.getHolder());
+            if (playbackSurface != null) {
+                playerService.clearOutputSurface(playbackSurface);
+            }
             playerService.setListener(null);
         }
+        releasePlaybackSurface();
         if (serviceBound) {
             unbindService(serviceConnection);
             serviceBound = false;
@@ -148,27 +153,37 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         subtitle.setPadding(0, dp(4), 0, dp(14));
         root.addView(subtitle);
 
-        surfaceView = new SurfaceView(this);
+        textureView = new TextureView(this);
         LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(210)
         );
-        surfaceView.setBackgroundColor(Color.BLACK);
-        root.addView(surfaceView, videoParams);
-        surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+        textureView.setBackgroundColor(Color.BLACK);
+        root.addView(textureView, videoParams);
+        textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
-            public void surfaceCreated(SurfaceHolder holder) {
-                if (playerService != null) playerService.setSurfaceHolder(holder);
+            public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
+                releasePlaybackSurface();
+                playbackSurface = new Surface(surfaceTexture);
+                attachPlaybackSurface();
             }
 
             @Override
-            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                if (playerService != null) playerService.setSurfaceHolder(holder);
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
+                attachPlaybackSurface();
             }
 
             @Override
-            public void surfaceDestroyed(SurfaceHolder holder) {
-                if (playerService != null) playerService.clearSurfaceHolder(holder);
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
+                if (playerService != null && playbackSurface != null) {
+                    playerService.clearOutputSurface(playbackSurface);
+                }
+                releasePlaybackSurface();
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
             }
         });
 
@@ -291,6 +306,19 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         }
     }
 
+    private void attachPlaybackSurface() {
+        if (playerService != null && playbackSurface != null && playbackSurface.isValid()) {
+            playerService.setOutputSurface(playbackSurface);
+        }
+    }
+
+    private void releasePlaybackSurface() {
+        if (playbackSurface != null) {
+            playbackSurface.release();
+            playbackSurface = null;
+        }
+    }
+
     private void loadLibraryVideos() {
         libraryVideos.clear();
         Uri collection = Build.VERSION.SDK_INT >= 29
@@ -399,7 +427,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int shown = 0;
         for (VideoItem item : libraryVideos) {
             if (!query.isEmpty() && !item.name.toLowerCase(Locale.US).contains(query)) continue;
-            libraryList.addView(videoRow(item, "Add", v -> {
+            libraryList.addView(videoRow(item, "Add", false, v -> {
                 if (playerService != null) {
                     playerService.addToPlaylist(item);
                     refreshPlaylist();
@@ -426,7 +454,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         for (int i = 0; i < playlist.size(); i++) {
             int index = i;
             VideoItem item = playlist.get(i);
-            LinearLayout row = videoRow(item, index == current ? "Playing" : "Play", v -> {
+            boolean watched = playerService.isWatched(item);
+            LinearLayout row = videoRow(item, index == current ? "Playing" : "Play", watched, v -> {
                 if (playerService != null) playerService.playIndex(index);
             });
             Button remove = secondaryButton("Remove");
@@ -439,15 +468,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         refreshPlayerHeader();
     }
 
-    private LinearLayout videoRow(VideoItem item, String actionText, View.OnClickListener action) {
+    private LinearLayout videoRow(VideoItem item, String actionText, boolean watched, View.OnClickListener action) {
         LinearLayout row = panel();
+        if (watched) {
+            row.setBackgroundResource(R.drawable.panel_watched_bg);
+        }
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(10), dp(10), dp(10), dp(10));
 
         LinearLayout textBlock = new LinearLayout(this);
         textBlock.setOrientation(LinearLayout.VERTICAL);
-        TextView name = text(item.name, 15, Color.rgb(244, 247, 251), true);
-        TextView meta = text(formatMeta(item), 12, Color.rgb(170, 180, 194), false);
+        TextView name = text(item.name, 15, watched ? Color.rgb(158, 166, 176) : Color.rgb(244, 247, 251), true);
+        TextView meta = text(watched ? "Watched - " + formatMeta(item) : formatMeta(item), 12, Color.rgb(170, 180, 194), false);
         textBlock.addView(name);
         textBlock.addView(meta);
         row.addView(textBlock, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
