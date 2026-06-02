@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -70,6 +71,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private boolean serviceBound = false;
     private boolean videoFullscreen = false;
     private boolean userDraggingVideoProgress = false;
+    private boolean activityResumed = false;
+    private long lastDragSeekMs = 0;
     private String currentPlaylistName = "Default";
     private FrameLayout videoContainer;
     private TextureView textureView;
@@ -137,6 +140,28 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         Intent serviceIntent = new Intent(this, BackgroundPlayerService.class);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
         requestNeededPermissions();
+        rootLayout.post(this::applyOrientationFullscreen);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        activityResumed = true;
+        applyOrientationFullscreen();
+        updateScreenAwakeState();
+    }
+
+    @Override
+    protected void onPause() {
+        activityResumed = false;
+        clearScreenAwakeState();
+        super.onPause();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        rootLayout.post(this::applyOrientationFullscreen);
     }
 
     @Override
@@ -146,6 +171,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         saveHistory();
         saveSkipTime();
         progressHandler.removeCallbacks(progressTicker);
+        clearScreenAwakeState();
         if (playerService != null) {
             if (playbackSurface != null) {
                 playerService.clearOutputSurface(playbackSurface);
@@ -579,17 +605,24 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 if (fromUser) {
                     updateVideoProgressText(progress, seekBar.getMax());
+                    long now = System.currentTimeMillis();
+                    if (playerService != null && now - lastDragSeekMs > 120) {
+                        lastDragSeekMs = now;
+                        playerService.seekTo(progress);
+                    }
                 }
             }
 
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
                 userDraggingVideoProgress = true;
+                lastDragSeekMs = 0;
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
                 userDraggingVideoProgress = false;
+                lastDragSeekMs = 0;
                 if (playerService != null) {
                     playerService.seekTo(seekBar.getProgress());
                 }
@@ -685,6 +718,34 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         videoContainer.post(this::applyVideoAspectTransform);
     }
 
+    private void applyOrientationFullscreen() {
+        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        if (videoContainer != null && videoFullscreen != landscape) {
+            setVideoFullscreen(landscape);
+        } else if (videoContainer != null) {
+            videoContainer.post(this::applyVideoAspectTransform);
+        }
+    }
+
+    private void updateScreenAwakeState() {
+        boolean shouldKeepAwake = activityResumed && playerService != null && playerService.isPlaying();
+        if (videoContainer != null) {
+            videoContainer.setKeepScreenOn(shouldKeepAwake);
+        }
+        if (shouldKeepAwake) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
+    private void clearScreenAwakeState() {
+        if (videoContainer != null) {
+            videoContainer.setKeepScreenOn(false);
+        }
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
     private void togglePlayback() {
         if (playerService == null) return;
         if (playerService.isPlaying()) {
@@ -695,6 +756,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             playerService.play();
         }
         updateVideoControls();
+        updateScreenAwakeState();
     }
 
     private void toggleVideoControls() {
@@ -886,6 +948,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         counterText.setText(total == 0 ? "0 / 0" : String.format(Locale.US, "%d / %d", index + 1, total));
         playPauseButton.setText(playerService.isPlaying() ? "Pause" : "Play");
         updateVideoControls();
+        updateScreenAwakeState();
     }
 
     private void refreshLibrary() {
