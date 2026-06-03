@@ -50,6 +50,7 @@ public class BackgroundPlayerService extends Service {
     private boolean autoplayNext = true;
     private boolean playWhenPrepared = false;
     private boolean prepared = false;
+    private boolean forceStartOffsetOnPrepare = false;
 
     public interface PlayerListener {
         void onPlayerChanged();
@@ -225,14 +226,14 @@ public class BackgroundPlayerService extends Service {
         if (playlist.isEmpty()) return;
         snapshotCurrentProgress();
         currentIndex = currentIndex + 1 < playlist.size() ? currentIndex + 1 : 0;
-        prepareCurrent(true);
+        prepareCurrent(true, true);
     }
 
     public void previous() {
         if (playlist.isEmpty()) return;
         snapshotCurrentProgress();
         currentIndex = currentIndex > 0 ? currentIndex - 1 : playlist.size() - 1;
-        prepareCurrent(true);
+        prepareCurrent(true, true);
     }
 
     public void setStartOffsetMs(int startOffsetMs) {
@@ -372,7 +373,8 @@ public class BackgroundPlayerService extends Service {
         player.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK);
         player.setOnPreparedListener(mp -> {
             prepared = true;
-            seekToStartPositionIfNeeded(mp);
+            seekToStartPositionIfNeeded(mp, forceStartOffsetOnPrepare);
+            forceStartOffsetOnPrepare = false;
             applyPlaybackSpeed();
             if (playWhenPrepared) {
                 markCurrentStarted();
@@ -402,9 +404,14 @@ public class BackgroundPlayerService extends Service {
     }
 
     private void prepareCurrent(boolean shouldPlay) {
+        prepareCurrent(shouldPlay, false);
+    }
+
+    private void prepareCurrent(boolean shouldPlay, boolean forceStartOffset) {
         if (currentIndex < 0 || currentIndex >= playlist.size()) return;
         ensurePlayer();
         prepared = false;
+        forceStartOffsetOnPrepare = forceStartOffset;
         playWhenPrepared = shouldPlay;
         player.reset();
         player.setAudioAttributes(new AudioAttributes.Builder()
@@ -424,6 +431,7 @@ public class BackgroundPlayerService extends Service {
             notifyChanged();
         } catch (IOException | IllegalArgumentException | SecurityException error) {
             prepared = false;
+            forceStartOffsetOnPrepare = false;
             notifyChanged();
         }
     }
@@ -434,6 +442,7 @@ public class BackgroundPlayerService extends Service {
         }
         prepared = false;
         playWhenPrepared = false;
+        forceStartOffsetOnPrepare = false;
         stopForeground(true);
         updatePlaybackState();
     }
@@ -471,10 +480,14 @@ public class BackgroundPlayerService extends Service {
     }
 
     private void seekToStartPositionIfNeeded(MediaPlayer mp) {
+        seekToStartPositionIfNeeded(mp, false);
+    }
+
+    private void seekToStartPositionIfNeeded(MediaPlayer mp, boolean forceStartOffset) {
         int duration = Math.max(0, mp.getDuration());
         VideoItem current = getCurrentItem();
         int savedProgress = current == null ? 0 : getSavedProgressMs(current);
-        if (savedProgress > 0 && duration > savedProgress + 500) {
+        if (!forceStartOffset && savedProgress > 0 && duration > savedProgress + 500) {
             mp.seekTo(savedProgress);
         } else if (startOffsetMs > 0 && duration > startOffsetMs + 500) {
             mp.seekTo(startOffsetMs);
