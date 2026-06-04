@@ -85,6 +85,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private boolean userDraggingVideoProgress = false;
     private boolean activityResumed = false;
     private boolean controlsLocked = false;
+    private boolean audioOnlyMode = false;
     private long lastDragSeekMs = 0;
     private String lastScanMessage = "No scan yet";
     private String currentPlaylistName = "Default";
@@ -192,6 +193,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     protected void onResume() {
         super.onResume();
         activityResumed = true;
+        audioOnlyMode = false;
+        attachPlaybackSurface();
         applyOrientationFullscreen();
         applyBottomTabVisibility();
         reloadPlaylistSourceLinks();
@@ -765,7 +768,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.8\n"
+                "Version: 2.9\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1650,7 +1653,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private void enterAudioOnlyMode() {
+        audioOnlyMode = true;
         setVideoControlsVisible(false);
+        detachPlaybackSurface();
+        if (playerService != null && playerService.isPlaying()) {
+            startPlaybackServiceIfNeeded();
+        }
         moveTaskToBack(true);
     }
 
@@ -1734,8 +1742,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private void attachPlaybackSurface() {
-        if (playerService != null && playbackSurface != null && playbackSurface.isValid()) {
+        if (!audioOnlyMode && playerService != null && playbackSurface != null && playbackSurface.isValid()) {
             playerService.setOutputSurface(playbackSurface);
+        }
+    }
+
+    private void detachPlaybackSurface() {
+        if (playerService != null && playbackSurface != null) {
+            playerService.clearOutputSurface(playbackSurface);
         }
     }
 
