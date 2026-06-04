@@ -771,7 +771,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.10\n"
+                "Version: 2.11\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1305,7 +1305,27 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         if (matcher.find()) {
             return parseInt(matcher.group(1), -1);
         }
+        String normalized = normalizeForMatch(value);
+        for (String token : normalized.split(" ")) {
+            if (!token.matches("\\d{1,4}")) continue;
+            int number = parseInt(token, -1);
+            if (number <= 0) continue;
+            if (isVideoQualityNumber(number)) continue;
+            return number;
+        }
         return -1;
+    }
+
+    private boolean isVideoQualityNumber(int number) {
+        return number == 144
+                || number == 240
+                || number == 360
+                || number == 480
+                || number == 540
+                || number == 720
+                || number == 1080
+                || number == 1440
+                || number == 2160;
     }
 
     private int scanMinimumEpisode(List<VideoItem> playlist) {
