@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -254,6 +255,45 @@ public class BackgroundPlayerService extends Service {
 
     public float getPlaybackSpeed() {
         return playbackSpeed;
+    }
+
+    public List<String> getAudioTrackLabels() {
+        ArrayList<String> labels = new ArrayList<>();
+        if (player == null || !prepared) return labels;
+        try {
+            MediaPlayer.TrackInfo[] tracks = player.getTrackInfo();
+            int audioCount = 0;
+            for (MediaPlayer.TrackInfo track : tracks) {
+                if (track.getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) continue;
+                audioCount++;
+                String language = track.getLanguage();
+                if (language == null || language.trim().isEmpty() || "und".equalsIgnoreCase(language)) {
+                    labels.add("Audio " + audioCount);
+                } else {
+                    labels.add("Audio " + audioCount + " - " + language.toUpperCase(Locale.US));
+                }
+            }
+        } catch (IllegalStateException ignored) {
+        }
+        return labels;
+    }
+
+    public void selectAudioTrack(int audioTrackIndex) {
+        if (player == null || !prepared || audioTrackIndex < 0) return;
+        try {
+            MediaPlayer.TrackInfo[] tracks = player.getTrackInfo();
+            int audioCount = 0;
+            for (int i = 0; i < tracks.length; i++) {
+                if (tracks[i].getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) continue;
+                if (audioCount == audioTrackIndex) {
+                    player.selectTrack(i);
+                    notifyChanged();
+                    return;
+                }
+                audioCount++;
+            }
+        } catch (IllegalStateException | IllegalArgumentException ignored) {
+        }
     }
 
     public void seekBy(int deltaMs) {

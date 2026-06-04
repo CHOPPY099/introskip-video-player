@@ -445,10 +445,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         LinearLayout modeRow = row();
         Button pipMode = secondaryButton("PiP video");
         Button audioOnly = secondaryButton("Audio only");
+        Button audioTrack = secondaryButton("Audio track");
         pipMode.setOnClickListener(v -> enterVideoPictureInPicture());
         audioOnly.setOnClickListener(v -> enterAudioOnlyMode());
+        audioTrack.setOnClickListener(v -> showAudioTrackDialog());
         modeRow.addView(pipMode, weightParams());
         modeRow.addView(audioOnly, weightParams());
+        modeRow.addView(audioTrack, weightParams());
         options.addView(modeRow);
 
         LinearLayout actions = row();
@@ -768,7 +771,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.9\n"
+                "Version: 2.10\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1275,12 +1278,22 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private ArrayList<String> significantTokens(String value) {
         ArrayList<String> tokens = new ArrayList<>();
         for (String token : normalizeForMatch(value).split(" ")) {
-            if (token.length() < 2) continue;
-            if ("anime".equals(token) || "episode".equals(token) || "video".equals(token) || "mp4".equals(token)) continue;
-            if ("480".equals(token) || "720".equals(token) || "1080".equals(token)) continue;
+            if (isSeriesNoiseToken(token)) continue;
             if (!tokens.contains(token)) tokens.add(token);
         }
         return tokens;
+    }
+
+    private boolean isSeriesNoiseToken(String token) {
+        if (token == null || token.length() < 2) return true;
+        if (token.matches("\\d+")) return true;
+        if ("anime".equals(token) || "episode".equals(token) || "episodes".equals(token) || "video".equals(token)) return true;
+        if ("mp4".equals(token) || "mkv".equals(token) || "avi".equals(token) || "mov".equals(token) || "webm".equals(token)) return true;
+        if ("480".equals(token) || "480p".equals(token) || "720".equals(token) || "720p".equals(token) || "1080".equals(token) || "1080p".equals(token)) return true;
+        if ("audio".equals(token) || "eng".equals(token) || "english".equals(token) || "jpn".equals(token) || "japanese".equals(token)) return true;
+        if ("dual".equals(token) || "dub".equals(token) || "dubbed".equals(token) || "sub".equals(token) || "subbed".equals(token) || "subs".equals(token)) return true;
+        if ("aac".equals(token) || "x264".equals(token) || "x265".equals(token) || "h264".equals(token) || "h265".equals(token) || "hevc".equals(token)) return true;
+        return "gallery".equals(token) || "download".equals(token) || "www".equals(token) || "com".equals(token);
     }
 
     private String normalizeForMatch(String value) {
@@ -1643,6 +1656,24 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         playerService.setPlaybackSpeed(speed);
         Toast.makeText(this, "Speed " + speedText(speed), Toast.LENGTH_SHORT).show();
         refreshPlayerHeader();
+    }
+
+    private void showAudioTrackDialog() {
+        if (playerService == null) return;
+        List<String> tracks = playerService.getAudioTrackLabels();
+        if (tracks.isEmpty()) {
+            Toast.makeText(this, "No alternate audio tracks found", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] labels = tracks.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+                .setTitle("Choose audio track")
+                .setItems(labels, (dialog, which) -> {
+                    playerService.selectAudioTrack(which);
+                    Toast.makeText(this, labels[which], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private String speedText(float speed) {
