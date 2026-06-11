@@ -47,6 +47,7 @@ public class BackgroundPlayerService extends Service {
     private PlayerListener listener;
     private int currentIndex = -1;
     private int startOffsetMs = 180000;
+    private int pendingSeekPositionMs = -1;
     private float playbackSpeed = 1f;
     private boolean autoplayNext = true;
     private boolean playWhenPrepared = false;
@@ -307,6 +308,7 @@ public class BackgroundPlayerService extends Service {
         if (player == null || !prepared) return;
         int duration = Math.max(0, player.getDuration());
         int target = Math.max(0, Math.min(duration, positionMs));
+        pendingSeekPositionMs = target;
         player.seekTo(target);
         updatePlaybackState();
         notifyChanged();
@@ -426,6 +428,11 @@ public class BackgroundPlayerService extends Service {
             notifyChanged();
         });
         player.setOnVideoSizeChangedListener((mp, width, height) -> notifyChanged());
+        player.setOnSeekCompleteListener(mp -> {
+            pendingSeekPositionMs = -1;
+            updatePlaybackState();
+            notifyChanged();
+        });
         player.setOnCompletionListener(mp -> {
             markCurrentWatched();
             prepared = false;
@@ -463,6 +470,7 @@ public class BackgroundPlayerService extends Service {
         if (currentIndex < 0 || currentIndex >= playlist.size()) return;
         ensurePlayer();
         prepared = false;
+        pendingSeekPositionMs = -1;
         forceStartOffsetOnPrepare = forceStartOffset;
         playWhenPrepared = shouldPlay;
         player.reset();
@@ -493,6 +501,7 @@ public class BackgroundPlayerService extends Service {
             player.reset();
         }
         prepared = false;
+        pendingSeekPositionMs = -1;
         playWhenPrepared = false;
         forceStartOffsetOnPrepare = false;
         stopForeground(true);
@@ -610,9 +619,12 @@ public class BackgroundPlayerService extends Service {
                 | PlaybackState.ACTION_SEEK_TO
                 | PlaybackState.ACTION_STOP;
         int state = isPlaying() ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
+        long position = pendingSeekPositionMs >= 0
+                ? pendingSeekPositionMs
+                : (prepared && player != null ? player.getCurrentPosition() : 0);
         mediaSession.setPlaybackState(new PlaybackState.Builder()
                 .setActions(actions)
-                .setState(state, prepared && player != null ? player.getCurrentPosition() : 0, isPlaying() ? 1f : 0f, System.currentTimeMillis())
+                .setState(state, position, isPlaying() ? 1f : 0f, System.currentTimeMillis())
                 .build());
     }
 
