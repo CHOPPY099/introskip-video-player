@@ -15,7 +15,9 @@ import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.view.Surface;
 
@@ -41,6 +43,15 @@ public class BackgroundPlayerService extends Service {
     private final Set<String> watchedKeys = new HashSet<>();
     private final Set<String> startedKeys = new HashSet<>();
     private final Map<String, Integer> progressByKey = new HashMap<>();
+    private final Handler mediaSessionHandler = new Handler(Looper.getMainLooper());
+    private final Runnable clearPendingSeekRunnable = new Runnable() {
+        @Override
+        public void run() {
+            pendingSeekPositionMs = -1;
+            updatePlaybackState();
+            notifyChanged();
+        }
+    };
     private MediaPlayer player;
     private MediaSession mediaSession;
     private Surface outputSurface;
@@ -307,11 +318,35 @@ public class BackgroundPlayerService extends Service {
     public void seekTo(int positionMs) {
         if (player == null || !prepared) return;
         int duration = Math.max(0, player.getDuration());
-        int target = Math.max(0, Math.min(duration, positionMs));
+        seekToResolved(Math.max(0, Math.min(duration, positionMs)));
+    }
+
+    private void seekToFromMediaSession(long positionMs) {
+        if (player == null || !prepared) return;
+        int duration = Math.max(0, player.getDuration());
+        int requested = (int) Math.min(Integer.MAX_VALUE, Math.max(0, positionMs));
+        int target = Math.max(0, Math.min(duration, normalizeExternalSeekPosition(requested, duration)));
+        seekToResolved(target);
+    }
+
+    private void seekToResolved(int target) {
         pendingSeekPositionMs = target;
+        mediaSessionHandler.removeCallbacks(clearPendingSeekRunnable);
+        VideoItem current = getCurrentItem();
+        if (current != null) {
+            startedKeys.add(current.key());
+            progressByKey.put(current.key(), target);
+        }
         player.seekTo(target);
         updatePlaybackState();
         notifyChanged();
+    }
+
+    private int normalizeExternalSeekPosition(int requestedPosition, int duration) {
+        if (duration > 60000 && requestedPosition > 0 && requestedPosition <= duration / 1000) {
+            return requestedPosition * 1000;
+        }
+        return requestedPosition;
     }
 
     public boolean isAutoplayNext() {
@@ -429,9 +464,10 @@ public class BackgroundPlayerService extends Service {
         });
         player.setOnVideoSizeChangedListener((mp, width, height) -> notifyChanged());
         player.setOnSeekCompleteListener(mp -> {
-            pendingSeekPositionMs = -1;
             updatePlaybackState();
             notifyChanged();
+            mediaSessionHandler.removeCallbacks(clearPendingSeekRunnable);
+            mediaSessionHandler.postDelayed(clearPendingSeekRunnable, 1000);
         });
         player.setOnCompletionListener(mp -> {
             markCurrentWatched();
@@ -597,7 +633,7 @@ public class BackgroundPlayerService extends Service {
 
             @Override
             public void onSeekTo(long pos) {
-                seekTo((int) Math.min(Integer.MAX_VALUE, Math.max(0, pos)));
+                seekToFromMediaSession(pos);
             }
 
             @Override
