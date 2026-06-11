@@ -337,7 +337,11 @@ public class BackgroundPlayerService extends Service {
             startedKeys.add(current.key());
             progressByKey.put(current.key(), target);
         }
-        player.seekTo(target);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            player.seekTo(target, MediaPlayer.SEEK_CLOSEST);
+        } else {
+            player.seekTo(target);
+        }
         updatePlaybackState();
         notifyChanged();
     }
@@ -467,7 +471,7 @@ public class BackgroundPlayerService extends Service {
             updatePlaybackState();
             notifyChanged();
             mediaSessionHandler.removeCallbacks(clearPendingSeekRunnable);
-            mediaSessionHandler.postDelayed(clearPendingSeekRunnable, 1000);
+            mediaSessionHandler.postDelayed(clearPendingSeekRunnable, 3000);
         });
         player.setOnCompletionListener(mp -> {
             markCurrentWatched();
@@ -610,6 +614,7 @@ public class BackgroundPlayerService extends Service {
 
     private void setupMediaSession() {
         mediaSession = new MediaSession(this, "IntroSkipPlayer");
+        mediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override
             public void onPlay() {
