@@ -19,6 +19,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.view.Surface;
 
 import java.io.IOException;
@@ -680,7 +681,7 @@ public class BackgroundPlayerService extends Service {
                 : (prepared && player != null ? player.getCurrentPosition() : 0);
         mediaSession.setPlaybackState(new PlaybackState.Builder()
                 .setActions(actions)
-                .setState(state, position, isPlaying() ? 1f : 0f, System.currentTimeMillis())
+                .setState(state, position, isPlaying() ? 1f : 0f, SystemClock.elapsedRealtime())
                 .build());
     }
 
