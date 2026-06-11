@@ -249,6 +249,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     @Override
     public void onPlayerChanged() {
         saveHistory();
+        saveActivePlaylistFromService();
         runOnUiThread(this::refreshPlaylist);
         runOnUiThread(this::refreshPlayerHeader);
         runOnUiThread(this::refreshHistory);
@@ -771,7 +772,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.11\n"
+                "Version: 2.12\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"

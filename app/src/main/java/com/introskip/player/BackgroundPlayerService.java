@@ -428,12 +428,17 @@ public class BackgroundPlayerService extends Service {
         player.setOnCompletionListener(mp -> {
             markCurrentWatched();
             prepared = false;
-            if (autoplayNext && playlist.size() > 1) {
-                next();
-            } else {
-                updatePlaybackState();
+            removeCompletedCurrent();
+            if (playlist.isEmpty()) {
+                currentIndex = -1;
+                resetPlayer();
                 updateNotification();
                 notifyChanged();
+            } else {
+                if (currentIndex >= playlist.size()) {
+                    currentIndex = 0;
+                }
+                prepareCurrent(autoplayNext, autoplayNext);
             }
         });
         player.setOnErrorListener((mp, what, extra) -> {
@@ -441,6 +446,12 @@ public class BackgroundPlayerService extends Service {
             notifyChanged();
             return true;
         });
+    }
+
+    private void removeCompletedCurrent() {
+        if (currentIndex >= 0 && currentIndex < playlist.size()) {
+            playlist.remove(currentIndex);
+        }
     }
 
     private void prepareCurrent(boolean shouldPlay) {
