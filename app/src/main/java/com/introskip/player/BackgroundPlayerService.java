@@ -416,6 +416,7 @@ public class BackgroundPlayerService extends Service {
             seekToStartPositionIfNeeded(mp, forceStartOffsetOnPrepare);
             forceStartOffsetOnPrepare = false;
             applyPlaybackSpeed();
+            updateMetadata();
             if (playWhenPrepared) {
                 markCurrentStarted();
                 mp.start();
@@ -586,6 +587,11 @@ public class BackgroundPlayerService extends Service {
             }
 
             @Override
+            public void onSeekTo(long pos) {
+                seekTo((int) Math.min(Integer.MAX_VALUE, Math.max(0, pos)));
+            }
+
+            @Override
             public void onStop() {
                 stopPlayback();
             }
@@ -601,11 +607,12 @@ public class BackgroundPlayerService extends Service {
                 | PlaybackState.ACTION_PLAY_PAUSE
                 | PlaybackState.ACTION_SKIP_TO_NEXT
                 | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                | PlaybackState.ACTION_SEEK_TO
                 | PlaybackState.ACTION_STOP;
         int state = isPlaying() ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
         mediaSession.setPlaybackState(new PlaybackState.Builder()
                 .setActions(actions)
-                .setState(state, prepared && player != null ? player.getCurrentPosition() : 0, isPlaying() ? 1f : 0f)
+                .setState(state, prepared && player != null ? player.getCurrentPosition() : 0, isPlaying() ? 1f : 0f, System.currentTimeMillis())
                 .build());
     }
 
@@ -619,7 +626,7 @@ public class BackgroundPlayerService extends Service {
         mediaSession.setMetadata(new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, current.name)
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, "IntroSkip Player")
-                .putLong(MediaMetadata.METADATA_KEY_DURATION, current.durationMs)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, Math.max(0, getDurationMs()))
                 .build());
     }
 
