@@ -56,9 +56,9 @@ public class BackgroundPlayerService extends Service {
     private final Runnable playbackStateTicker = new Runnable() {
         @Override
         public void run() {
+            playbackStateTickerScheduled = false;
             if (isPlaying()) {
                 updatePlaybackState();
-                mediaSessionHandler.postDelayed(this, 1000);
             }
         }
     };
@@ -74,6 +74,7 @@ public class BackgroundPlayerService extends Service {
     private boolean playWhenPrepared = false;
     private boolean prepared = false;
     private boolean forceStartOffsetOnPrepare = false;
+    private boolean playbackStateTickerScheduled = false;
 
     public interface PlayerListener {
         void onPlayerChanged();
@@ -489,20 +490,30 @@ public class BackgroundPlayerService extends Service {
             mediaSessionHandler.postDelayed(clearPendingSeekRunnable, 3000);
         });
         player.setOnCompletionListener(mp -> {
+            int completedPosition = Math.max(0, getDurationMs());
             markCurrentWatched();
             prepared = false;
-            removeCompletedCurrent();
+            pendingSeekPositionMs = completedPosition;
+            int completedIndex = removeWatchedExceptCurrent();
             if (playlist.isEmpty()) {
                 currentIndex = -1;
                 resetPlayer();
                 updateNotification();
                 notifyChanged();
-            } else {
-                if (currentIndex >= playlist.size()) {
-                    currentIndex = 0;
-                }
-                prepareCurrent(autoplayNext, autoplayNext);
+                return;
             }
+            currentIndex = Math.max(0, Math.min(completedIndex, playlist.size() - 1));
+            int nextIndex = autoplayNext ? findNextUnwatchedAfter(currentIndex) : -1;
+            if (nextIndex >= 0) {
+                currentIndex = nextIndex;
+                prepareCurrent(true, true);
+                return;
+            }
+            playWhenPrepared = false;
+            forceStartOffsetOnPrepare = false;
+            updateNotification();
+            updatePlaybackState();
+            notifyChanged();
         });
         player.setOnErrorListener((mp, what, extra) -> {
             prepared = false;
@@ -511,10 +522,26 @@ public class BackgroundPlayerService extends Service {
         });
     }
 
-    private void removeCompletedCurrent() {
-        if (currentIndex >= 0 && currentIndex < playlist.size()) {
-            playlist.remove(currentIndex);
+    private int removeWatchedExceptCurrent() {
+        if (currentIndex < 0 || currentIndex >= playlist.size()) return currentIndex;
+        String currentKey = playlist.get(currentIndex).key();
+        for (int i = playlist.size() - 1; i >= 0; i--) {
+            VideoItem item = playlist.get(i);
+            if (!item.key().equals(currentKey) && watchedKeys.contains(item.key())) {
+                playlist.remove(i);
+                if (i < currentIndex) currentIndex--;
+            }
         }
+        return currentIndex;
+    }
+
+    private int findNextUnwatchedAfter(int index) {
+        for (int i = index + 1; i < playlist.size(); i++) {
+            if (!watchedKeys.contains(playlist.get(i).key())) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void prepareCurrent(boolean shouldPlay) {
@@ -683,17 +710,26 @@ public class BackgroundPlayerService extends Service {
                 .setActions(actions)
                 .setState(state, position, isPlaying() ? 1f : 0f, SystemClock.elapsedRealtime())
                 .build());
+        if (state == PlaybackState.STATE_PLAYING) {
+            schedulePlaybackStateTicker();
+        } else {
+            stopPlaybackStateTicker();
+        }
     }
 
     private void schedulePlaybackStateTicker() {
-        mediaSessionHandler.removeCallbacks(playbackStateTicker);
+        if (playbackStateTickerScheduled) return;
+        playbackStateTickerScheduled = true;
         if (isPlaying()) {
             mediaSessionHandler.postDelayed(playbackStateTicker, 1000);
+        } else {
+            playbackStateTickerScheduled = false;
         }
     }
 
     private void stopPlaybackStateTicker() {
         mediaSessionHandler.removeCallbacks(playbackStateTicker);
+        playbackStateTickerScheduled = false;
     }
 
     private void updateMetadata() {

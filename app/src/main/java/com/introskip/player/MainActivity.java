@@ -772,7 +772,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.18\n"
+                "Version: 2.21\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1408,31 +1408,31 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     private void buildVideoOverlay(int textColor) {
         videoControlsOverlay = new LinearLayout(this);
-        videoControlsOverlay.setOrientation(LinearLayout.HORIZONTAL);
+        videoControlsOverlay.setOrientation(LinearLayout.VERTICAL);
         videoControlsOverlay.setGravity(Gravity.CENTER_VERTICAL);
-        videoControlsOverlay.setPadding(dp(8), dp(6), dp(8), dp(6));
+        videoControlsOverlay.setPadding(dp(8), dp(6), dp(8), dp(8));
         videoControlsOverlay.setBackgroundColor(Color.argb(190, 0, 0, 0));
         videoControlsOverlay.setVisibility(View.GONE);
 
+        LinearLayout overlayButtonRow = row();
+        overlayButtonRow.setGravity(Gravity.CENTER_VERTICAL);
+
         overlayPlayPauseButton = primaryButton("Play");
-        overlayPlayPauseButton.setMinWidth(dp(82));
         overlayPlayPauseButton.setOnClickListener(v -> togglePlayback());
-        videoControlsOverlay.addView(overlayPlayPauseButton);
+        overlayButtonRow.addView(overlayPlayPauseButton, overlayButtonParams());
 
         overlayPipButton = secondaryButton("PiP");
-        overlayPipButton.setMinWidth(dp(70));
         overlayPipButton.setOnClickListener(v -> enterVideoPictureInPicture());
-        videoControlsOverlay.addView(overlayPipButton);
+        overlayButtonRow.addView(overlayPipButton, overlayButtonParams());
 
         overlayAudioButton = secondaryButton("Audio");
-        overlayAudioButton.setMinWidth(dp(82));
         overlayAudioButton.setOnClickListener(v -> enterAudioOnlyMode());
-        videoControlsOverlay.addView(overlayAudioButton);
+        overlayButtonRow.addView(overlayAudioButton, overlayButtonParams());
 
         overlayLockButton = secondaryButton("Lock");
-        overlayLockButton.setMinWidth(dp(78));
         overlayLockButton.setOnClickListener(v -> setControlsLocked(!controlsLocked));
-        videoControlsOverlay.addView(overlayLockButton);
+        overlayButtonRow.addView(overlayLockButton, overlayButtonParams());
+        videoControlsOverlay.addView(overlayButtonRow, fullParams());
 
         videoProgressBar = new SeekBar(this);
         videoProgressBar.setMax(0);
@@ -1466,7 +1466,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 updateVideoControls();
             }
         });
-        videoControlsOverlay.addView(videoProgressBar, new LinearLayout.LayoutParams(
+
+        LinearLayout overlayProgressRow = row();
+        overlayProgressRow.setGravity(Gravity.CENTER_VERTICAL);
+        overlayProgressRow.setPadding(0, dp(6), 0, 0);
+        overlayProgressRow.addView(videoProgressBar, new LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1
@@ -1474,7 +1478,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
         videoProgressText = text("0:00 / 0:00", 12, textColor, false);
         videoProgressText.setGravity(Gravity.CENTER_VERTICAL);
-        videoControlsOverlay.addView(videoProgressText);
+        overlayProgressRow.addView(videoProgressText);
+        videoControlsOverlay.addView(overlayProgressRow, fullParams());
 
         FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -1482,6 +1487,16 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 Gravity.BOTTOM
         );
         videoContainer.addView(videoControlsOverlay, overlayParams);
+    }
+
+    private LinearLayout.LayoutParams overlayButtonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1
+        );
+        params.setMargins(dp(3), 0, dp(3), 0);
+        return params;
     }
 
     private void setupVideoGestures() {
