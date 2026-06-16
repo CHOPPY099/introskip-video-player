@@ -73,6 +73,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private static final String KEY_SKIP_SECONDS = "skip_seconds";
     private static final String KEY_ACTIVE_TAB = "active_tab";
     private static final String KEY_PLAYLIST_DETAIL_OPEN = "playlist_detail_open";
+    private static final String KEY_AUDIO_TRACK_INDEX = "audio_track_index";
+    private static final String KEY_AUDIO_TRACK_LANGUAGE = "audio_track_language";
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
@@ -160,6 +162,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             playerService = ((BackgroundPlayerService.LocalBinder) service).getService();
             attachPlaybackSurface();
             playerService.restoreHistory(loadProgress(), loadWatched());
+            playerService.restorePreferredAudioTrack(loadPreferredAudioTrackIndex(), loadPreferredAudioTrackLanguage());
             loadCurrentPlaylistIntoService();
             playerService.setAutoplayNext(autoplayCheck.isChecked());
             applySkipTime();
@@ -772,7 +775,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.21\n"
+                "Version: 2.22\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -1706,7 +1709,13 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                 .setTitle("Choose audio track")
                 .setItems(labels, (dialog, which) -> {
                     playerService.selectAudioTrack(which);
-                    Toast.makeText(this, labels[which], Toast.LENGTH_SHORT).show();
+                    savePreferredAudioTrack();
+                    Toast.makeText(this, "Saved " + labels[which] + " for next episodes", Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton("Use default", (dialog, which) -> {
+                    playerService.clearPreferredAudioTrack();
+                    savePreferredAudioTrack();
+                    Toast.makeText(this, "Audio preference cleared", Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1909,6 +1918,22 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putInt(KEY_SKIP_MINUTES, parseBounded(minutesInput, 0, 999))
                 .putInt(KEY_SKIP_SECONDS, parseBounded(secondsInput, 0, 59))
+                .commit();
+    }
+
+    private int loadPreferredAudioTrackIndex() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getInt(KEY_AUDIO_TRACK_INDEX, -1);
+    }
+
+    private String loadPreferredAudioTrackLanguage() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_AUDIO_TRACK_LANGUAGE, "");
+    }
+
+    private void savePreferredAudioTrack() {
+        if (playerService == null) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt(KEY_AUDIO_TRACK_INDEX, playerService.getPreferredAudioTrackIndex())
+                .putString(KEY_AUDIO_TRACK_LANGUAGE, playerService.getPreferredAudioLanguage())
                 .commit();
     }
 

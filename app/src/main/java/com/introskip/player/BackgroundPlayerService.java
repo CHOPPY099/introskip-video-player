@@ -75,6 +75,8 @@ public class BackgroundPlayerService extends Service {
     private boolean prepared = false;
     private boolean forceStartOffsetOnPrepare = false;
     private boolean playbackStateTickerScheduled = false;
+    private int preferredAudioTrackIndex = -1;
+    private String preferredAudioLanguage = "";
 
     public interface PlayerListener {
         void onPlayerChanged();
@@ -305,8 +307,55 @@ public class BackgroundPlayerService extends Service {
         return labels;
     }
 
+    public void restorePreferredAudioTrack(int audioTrackIndex, String audioLanguage) {
+        preferredAudioTrackIndex = audioTrackIndex;
+        preferredAudioLanguage = normalizeLanguage(audioLanguage);
+        applyPreferredAudioTrack();
+    }
+
+    public void clearPreferredAudioTrack() {
+        preferredAudioTrackIndex = -1;
+        preferredAudioLanguage = "";
+        notifyChanged();
+    }
+
+    public int getPreferredAudioTrackIndex() {
+        return preferredAudioTrackIndex;
+    }
+
+    public String getPreferredAudioLanguage() {
+        return preferredAudioLanguage;
+    }
+
     public void selectAudioTrack(int audioTrackIndex) {
         if (player == null || !prepared || audioTrackIndex < 0) return;
+        String selectedLanguage = getAudioTrackLanguage(audioTrackIndex);
+        if (selectAudioTrackInternal(audioTrackIndex)) {
+            preferredAudioTrackIndex = audioTrackIndex;
+            preferredAudioLanguage = selectedLanguage;
+            notifyChanged();
+        }
+    }
+
+    public String getAudioTrackLanguage(int audioTrackIndex) {
+        if (player == null || !prepared || audioTrackIndex < 0) return "";
+        try {
+            MediaPlayer.TrackInfo[] tracks = player.getTrackInfo();
+            int audioCount = 0;
+            for (MediaPlayer.TrackInfo track : tracks) {
+                if (track.getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) continue;
+                if (audioCount == audioTrackIndex) {
+                    return normalizeLanguage(track.getLanguage());
+                }
+                audioCount++;
+            }
+        } catch (IllegalStateException ignored) {
+        }
+        return "";
+    }
+
+    private boolean selectAudioTrackInternal(int audioTrackIndex) {
+        if (player == null || !prepared || audioTrackIndex < 0) return false;
         try {
             MediaPlayer.TrackInfo[] tracks = player.getTrackInfo();
             int audioCount = 0;
@@ -314,13 +363,51 @@ public class BackgroundPlayerService extends Service {
                 if (tracks[i].getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) continue;
                 if (audioCount == audioTrackIndex) {
                     player.selectTrack(i);
-                    notifyChanged();
-                    return;
+                    return true;
                 }
                 audioCount++;
             }
         } catch (IllegalStateException | IllegalArgumentException ignored) {
         }
+        return false;
+    }
+
+    private void applyPreferredAudioTrack() {
+        if (player == null || !prepared || preferredAudioTrackIndex < 0) return;
+        int trackToSelect = findPreferredAudioTrackIndex();
+        if (trackToSelect >= 0 && selectAudioTrackInternal(trackToSelect)) {
+            notifyChanged();
+        }
+    }
+
+    private int findPreferredAudioTrackIndex() {
+        if (player == null || !prepared) return -1;
+        try {
+            MediaPlayer.TrackInfo[] tracks = player.getTrackInfo();
+            int audioCount = 0;
+            int fallback = -1;
+            for (MediaPlayer.TrackInfo track : tracks) {
+                if (track.getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) continue;
+                if (audioCount == preferredAudioTrackIndex) {
+                    fallback = audioCount;
+                }
+                String language = normalizeLanguage(track.getLanguage());
+                if (!preferredAudioLanguage.isEmpty() && preferredAudioLanguage.equals(language)) {
+                    return audioCount;
+                }
+                audioCount++;
+            }
+            return fallback;
+        } catch (IllegalStateException ignored) {
+            return -1;
+        }
+    }
+
+    private String normalizeLanguage(String language) {
+        if (language == null) return "";
+        String normalized = language.trim().toLowerCase(Locale.US);
+        if (normalized.isEmpty() || "und".equals(normalized)) return "";
+        return normalized;
     }
 
     public void seekBy(int deltaMs) {
@@ -472,6 +559,7 @@ public class BackgroundPlayerService extends Service {
             seekToStartPositionIfNeeded(mp, forceStartOffsetOnPrepare);
             forceStartOffsetOnPrepare = false;
             applyPlaybackSpeed();
+            applyPreferredAudioTrack();
             updateMetadata();
             if (playWhenPrepared) {
                 markCurrentStarted();
