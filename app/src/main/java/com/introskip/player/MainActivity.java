@@ -75,6 +75,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     private static final String KEY_PLAYLIST_DETAIL_OPEN = "playlist_detail_open";
     private static final String KEY_AUDIO_TRACK_INDEX = "audio_track_index";
     private static final String KEY_AUDIO_TRACK_LANGUAGE = "audio_track_language";
+    private static final long FOREGROUND_PROGRESS_TICK_MS = 1000;
+    private static final long BACKGROUND_PROGRESS_TICK_MS = 15000;
 
     private final ArrayList<VideoItem> libraryVideos = new ArrayList<>();
     private final LinkedHashMap<String, ArrayList<VideoItem>> savedPlaylists = new LinkedHashMap<>();
@@ -148,11 +150,12 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         public void run() {
             if (playerService != null) {
                 saveHistory();
-                refreshPlayerHeader();
-                refreshPlaylist();
-                refreshHistory();
+                if (activityResumed) {
+                    refreshPlayerHeader();
+                    updateVideoControls();
+                }
             }
-            progressHandler.postDelayed(this, 1000);
+            progressHandler.postDelayed(this, activityResumed ? FOREGROUND_PROGRESS_TICK_MS : BACKGROUND_PROGRESS_TICK_MS);
         }
     };
 
@@ -169,7 +172,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             playerService.setListener(MainActivity.this);
             serviceBound = true;
             progressHandler.removeCallbacks(progressTicker);
-            progressHandler.postDelayed(progressTicker, 1000);
+            progressHandler.post(progressTicker);
             refreshAll();
         }
 
@@ -203,12 +206,18 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         reloadPlaylistSourceLinks();
         updateSourceInputForCurrentPlaylist();
         updateScreenAwakeState();
+        progressHandler.removeCallbacks(progressTicker);
+        progressHandler.post(progressTicker);
+        refreshAll();
     }
 
     @Override
     protected void onPause() {
         activityResumed = false;
+        saveHistory();
         saveNavigationState();
+        progressHandler.removeCallbacks(progressTicker);
+        progressHandler.postDelayed(progressTicker, BACKGROUND_PROGRESS_TICK_MS);
         clearScreenAwakeState();
         super.onPause();
     }
@@ -228,9 +237,8 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
 
     @Override
     protected void onDestroy() {
-        saveActivePlaylistFromService();
-        saveAllPlaylists();
-        saveHistory();
+        saveActivePlaylistFromService(true);
+        saveHistory(true);
         saveSkipTime();
         saveNavigationState();
         progressHandler.removeCallbacks(progressTicker);
@@ -253,9 +261,11 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     public void onPlayerChanged() {
         saveHistory();
         saveActivePlaylistFromService();
-        runOnUiThread(this::refreshPlaylist);
-        runOnUiThread(this::refreshPlayerHeader);
-        runOnUiThread(this::refreshHistory);
+        if (activityResumed) {
+            runOnUiThread(this::refreshPlaylist);
+            runOnUiThread(this::refreshPlayerHeader);
+            runOnUiThread(this::refreshHistory);
+        }
     }
 
     @Override
@@ -775,7 +785,7 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
         int historyCount = playerService == null ? 0 : playerService.getProgressSnapshot().size();
         String current = playerService == null || playerService.getCurrentItem() == null ? "None" : playerService.getCurrentItem().name;
         debugText.setText(
-                "Version: 2.22\n"
+                "Version: 2.23\n"
                         + "Current playlist: " + currentPlaylistName + "\n"
                         + "Current video: " + current + "\n"
                         + "Playlist videos: " + playlistCount + "\n"
@@ -870,12 +880,25 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private void saveActivePlaylistFromService() {
+        saveActivePlaylistFromService(false);
+    }
+
+    private void saveActivePlaylistFromService(boolean synchronous) {
         if (playerService == null) return;
-        savedPlaylists.put(currentPlaylistName, new ArrayList<>(playerService.getPlaylist()));
-        saveAllPlaylists();
+        ArrayList<VideoItem> playlist = new ArrayList<>(playerService.getPlaylist());
+        ArrayList<VideoItem> saved = savedPlaylists.get(currentPlaylistName);
+        if (!synchronous && saved != null && saved.equals(playlist)) {
+            return;
+        }
+        savedPlaylists.put(currentPlaylistName, playlist);
+        saveAllPlaylists(synchronous);
     }
 
     private void saveAllPlaylists() {
+        saveAllPlaylists(false);
+    }
+
+    private void saveAllPlaylists(boolean synchronous) {
         try {
             JSONObject root = new JSONObject();
             for (Map.Entry<String, ArrayList<VideoItem>> entry : savedPlaylists.entrySet()) {
@@ -891,11 +914,15 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
                     sources.put(entry.getKey(), entry.getValue().trim());
                 }
             }
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            SharedPreferences.Editor editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putString(KEY_PLAYLISTS, root.toString())
                     .putString(KEY_PLAYLIST_SOURCES, sources.toString())
-                    .putString(KEY_CURRENT_PLAYLIST, currentPlaylistName)
-                    .commit();
+                    .putString(KEY_CURRENT_PLAYLIST, currentPlaylistName);
+            if (synchronous) {
+                editor.commit();
+            } else {
+                editor.apply();
+            }
         } catch (JSONException ignored) {
         }
     }
@@ -919,6 +946,10 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
     }
 
     private void saveHistory() {
+        saveHistory(false);
+    }
+
+    private void saveHistory(boolean synchronous) {
         if (playerService == null) return;
         try {
             JSONObject progress = new JSONObject();
@@ -929,10 +960,14 @@ public class MainActivity extends Activity implements BackgroundPlayerService.Pl
             for (String key : playerService.getWatchedSnapshot()) {
                 watched.put(key);
             }
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            SharedPreferences.Editor editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putString(KEY_PROGRESS, progress.toString())
-                    .putString(KEY_WATCHED, watched.toString())
-                    .commit();
+                    .putString(KEY_WATCHED, watched.toString());
+            if (synchronous) {
+                editor.commit();
+            } else {
+                editor.apply();
+            }
         } catch (JSONException ignored) {
         }
     }
