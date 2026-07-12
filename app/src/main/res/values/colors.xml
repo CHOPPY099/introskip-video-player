@@ -1,6 +1,8 @@
 <resources>
-    <color name="bg">#111317</color>
-    <color name="panel">#1B1F25</color>
-    <color name="accent">#21C7A8</color>
-    <color name="text">#F4F7FB</color>
+    <color name="bg">#101416</color>
+    <color name="panel">#1A2023</color>
+    <color name="panel_elevated">#222A2E</color>
+    <color name="accent">#2FD1B5</color>
+    <color name="stroke">#303B3F</color>
+    <color name="icon_background">#11191C</color>
 </resources>

@@ -1,4 +1,4 @@
-package com.introskip.player;
+package com.choppy.episodeflow;
 
 import android.net.Uri;
 

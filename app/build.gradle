@@ -3,19 +3,23 @@ plugins {
 }
 
 android {
-    namespace "com.introskip.player"
+    namespace "com.choppy.episodeflow"
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.introskip.player"
+        applicationId "com.choppy.episodeflow"
         minSdk 26
         targetSdk 35
-        versionCode 34
-        versionName "2.23"
+        versionCode 1
+        versionName "1.0.0"
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
 }

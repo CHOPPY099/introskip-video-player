@@ -1,13 +1,17 @@
-package com.introskip.player;
+package com.choppy.episodeflow;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.MediaPlayer;
 import android.media.PlaybackParams;
@@ -34,17 +38,26 @@ import java.util.Set;
 public class BackgroundPlayerService extends Service {
     private static final String CHANNEL_ID = "playback";
     private static final int NOTIFICATION_ID = 42;
-    private static final String ACTION_PLAY_PAUSE = "com.introskip.player.PLAY_PAUSE";
-    private static final String ACTION_NEXT = "com.introskip.player.NEXT";
-    private static final String ACTION_PREVIOUS = "com.introskip.player.PREVIOUS";
-    private static final String ACTION_STOP = "com.introskip.player.STOP";
+    private static final String ACTION_PLAY_PAUSE = "com.choppy.episodeflow.PLAY_PAUSE";
+    private static final String ACTION_NEXT = "com.choppy.episodeflow.NEXT";
+    private static final String ACTION_PREVIOUS = "com.choppy.episodeflow.PREVIOUS";
+    private static final String ACTION_STOP = "com.choppy.episodeflow.STOP";
 
     private final IBinder binder = new LocalBinder();
     private final ArrayList<VideoItem> playlist = new ArrayList<>();
     private final Set<String> watchedKeys = new HashSet<>();
     private final Set<String> startedKeys = new HashSet<>();
+    private final Set<String> failedKeys = new HashSet<>();
     private final Map<String, Integer> progressByKey = new HashMap<>();
     private final Handler mediaSessionHandler = new Handler(Looper.getMainLooper());
+    private final BroadcastReceiver noisyAudioReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction()) && isPlaying()) {
+                pause();
+            }
+        }
+    };
     private final Runnable clearPendingSeekRunnable = new Runnable() {
         @Override
         public void run() {
@@ -64,6 +77,8 @@ public class BackgroundPlayerService extends Service {
     };
     private MediaPlayer player;
     private MediaSession mediaSession;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
     private Surface outputSurface;
     private PlayerListener listener;
     private int currentIndex = -1;
@@ -77,6 +92,7 @@ public class BackgroundPlayerService extends Service {
     private boolean playbackStateTickerScheduled = false;
     private int preferredAudioTrackIndex = -1;
     private String preferredAudioLanguage = "";
+    private boolean resumeAfterFocusGain = false;
 
     public interface PlayerListener {
         void onPlayerChanged();
@@ -93,6 +109,12 @@ public class BackgroundPlayerService extends Service {
         super.onCreate();
         createNotificationChannel();
         setupMediaSession();
+        setupAudioFocus();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(noisyAudioReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(noisyAudioReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+        }
         ensurePlayer();
     }
 
@@ -122,6 +144,11 @@ public class BackgroundPlayerService extends Service {
     public void onDestroy() {
         stopPlaybackStateTicker();
         mediaSessionHandler.removeCallbacks(clearPendingSeekRunnable);
+        try {
+            unregisterReceiver(noisyAudioReceiver);
+        } catch (IllegalArgumentException ignored) {
+        }
+        abandonAudioFocus();
         if (player != null) {
             player.release();
             player = null;
@@ -232,6 +259,7 @@ public class BackgroundPlayerService extends Service {
             prepareCurrent(true);
             return;
         }
+        if (!requestAudioFocus()) return;
         seekToStartPositionIfNeeded(player);
         markCurrentStarted();
         player.start();
@@ -242,12 +270,14 @@ public class BackgroundPlayerService extends Service {
     }
 
     public void pause() {
+        resumeAfterFocusGain = false;
         if (player != null && prepared && player.isPlaying()) {
             player.pause();
         }
         snapshotCurrentProgress();
         updatePlaybackState();
         stopPlaybackStateTicker();
+        abandonAudioFocus();
         updateNotification();
         notifyChanged();
     }
@@ -556,16 +586,22 @@ public class BackgroundPlayerService extends Service {
         player.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK);
         player.setOnPreparedListener(mp -> {
             prepared = true;
+            VideoItem preparedItem = getCurrentItem();
+            if (preparedItem != null) failedKeys.remove(preparedItem.key());
             seekToStartPositionIfNeeded(mp, forceStartOffsetOnPrepare);
             forceStartOffsetOnPrepare = false;
             applyPlaybackSpeed();
             applyPreferredAudioTrack();
             updateMetadata();
             if (playWhenPrepared) {
-                markCurrentStarted();
-                mp.start();
-                enterForeground();
-                schedulePlaybackStateTicker();
+                if (requestAudioFocus()) {
+                    markCurrentStarted();
+                    mp.start();
+                    enterForeground();
+                    schedulePlaybackStateTicker();
+                } else {
+                    playWhenPrepared = false;
+                }
             }
             updatePlaybackState();
             notifyChanged();
@@ -604,7 +640,18 @@ public class BackgroundPlayerService extends Service {
             notifyChanged();
         });
         player.setOnErrorListener((mp, what, extra) -> {
+            VideoItem failedItem = getCurrentItem();
+            if (failedItem != null) failedKeys.add(failedItem.key());
             prepared = false;
+            int nextIndex = autoplayNext ? findNextUnwatchedAfter(currentIndex) : -1;
+            if (nextIndex >= 0) {
+                currentIndex = nextIndex;
+                prepareCurrent(true, true);
+                return true;
+            }
+            playWhenPrepared = false;
+            updateNotification();
+            updatePlaybackState();
             notifyChanged();
             return true;
         });
@@ -625,7 +672,7 @@ public class BackgroundPlayerService extends Service {
 
     private int findNextUnwatchedAfter(int index) {
         for (int i = index + 1; i < playlist.size(); i++) {
-            if (!watchedKeys.contains(playlist.get(i).key())) {
+            if (!watchedKeys.contains(playlist.get(i).key()) && !failedKeys.contains(playlist.get(i).key())) {
                 return i;
             }
         }
@@ -644,10 +691,7 @@ public class BackgroundPlayerService extends Service {
         forceStartOffsetOnPrepare = forceStartOffset;
         playWhenPrepared = shouldPlay;
         player.reset();
-        player.setAudioAttributes(new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                .build());
+        player.setAudioAttributes(playbackAudioAttributes());
         player.setSurface(outputSurface);
         try {
             player.setDataSource(this, playlist.get(currentIndex).uri);
@@ -675,6 +719,7 @@ public class BackgroundPlayerService extends Service {
         playWhenPrepared = false;
         forceStartOffsetOnPrepare = false;
         stopPlaybackStateTicker();
+        abandonAudioFocus();
         stopForeground(true);
         updatePlaybackState();
     }
@@ -743,8 +788,67 @@ public class BackgroundPlayerService extends Service {
         }
     }
 
+    private AudioAttributes playbackAudioAttributes() {
+        return new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                .build();
+    }
+
+    private void setupAudioFocus() {
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(playbackAudioAttributes())
+                .setOnAudioFocusChangeListener(this::handleAudioFocusChange)
+                .setWillPauseWhenDucked(false)
+                .build();
+    }
+
+    private boolean requestAudioFocus() {
+        if (audioManager == null || audioFocusRequest == null) return true;
+        return audioManager.requestAudioFocus(audioFocusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    }
+
+    private void abandonAudioFocus() {
+        if (audioManager != null && audioFocusRequest != null) {
+            audioManager.abandonAudioFocusRequest(audioFocusRequest);
+        }
+    }
+
+    private void handleAudioFocusChange(int focusChange) {
+        if (player == null || !prepared) return;
+        if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+            player.setVolume(1f, 1f);
+            if (resumeAfterFocusGain && !player.isPlaying()) {
+                resumeAfterFocusGain = false;
+                player.start();
+                enterForeground();
+                schedulePlaybackStateTicker();
+                updateNotification();
+                notifyChanged();
+            }
+        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+            player.setVolume(0.25f, 0.25f);
+        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            resumeAfterFocusGain = player.isPlaying();
+            pauseForAudioFocus();
+        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+            resumeAfterFocusGain = false;
+            pauseForAudioFocus();
+        }
+    }
+
+    private void pauseForAudioFocus() {
+        if (player != null && prepared && player.isPlaying()) player.pause();
+        snapshotCurrentProgress();
+        updatePlaybackState();
+        stopPlaybackStateTicker();
+        updateNotification();
+        notifyChanged();
+    }
+
     private void setupMediaSession() {
-        mediaSession = new MediaSession(this, "IntroSkipPlayer");
+        mediaSession = new MediaSession(this, "EpisodeFlowPlayer");
         mediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override
@@ -829,7 +933,7 @@ public class BackgroundPlayerService extends Service {
         }
         mediaSession.setMetadata(new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, current.name)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, "IntroSkip Player")
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, "EpisodeFlow")
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, Math.max(0, getDurationMs()))
                 .build());
     }
@@ -853,7 +957,7 @@ public class BackgroundPlayerService extends Service {
 
     private Notification buildNotification() {
         VideoItem current = getCurrentItem();
-        String title = current == null ? "IntroSkip" : current.name;
+        String title = current == null ? "EpisodeFlow" : current.name;
         String status = isPlaying() ? "Playing in background" : "Paused";
         Intent launchIntent = new Intent(this, MainActivity.class);
         PendingIntent contentIntent = PendingIntent.getActivity(
