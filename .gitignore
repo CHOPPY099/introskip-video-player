@@ -1,6 +1,14 @@
 .gradle/
 build/
 app/build/
+ultimate/build/
+ultimate/dist/
+research/**/*.apk
+research/**/*.aar
+research/**/*.jar
+research/**/libvlc-sources/
+research/qa/
+research/**/rea-evidence.json
 local.properties
 
 *.iml

@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "EpisodeFlow"
 include ":app"
+include ":ultimate"

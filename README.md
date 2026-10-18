@@ -1,5 +1,9 @@
 # EpisodeFlow
 
+## Ultimate Player Preview
+
+The new, separate `ultimate` Android module combines LibVLC playback with this project's episodic-video workflow. It installs as **Ultimate Player** (`com.choppy.ultimateplayer`) without replacing EpisodeFlow or IntroSkip. See [build instructions and features](ultimate/README.md), [verification results](ultimate/QA.md), and the [focused VLC REA investigation](research/vlc-3.7.1/ANALYSIS.md).
+
 EpisodeFlow is a native Android player for downloaded episodic video. It keeps IntroSkip's specialist playback behavior while presenting it through a cleaner library, playlist, history, player, and settings experience.
 
 EpisodeFlow uses the application ID `com.choppy.episodeflow`, so it installs beside the original IntroSkip app (`com.introskip.player`) without replacing it.

@@ -1,0 +1,26 @@
+Ultimate Player 0.1.0
+
+This independent application is not affiliated with or endorsed by VideoLAN. VLC and VideoLAN names identify their respective upstream projects. No VLC application branding or decompiled application source is included in Ultimate Player.
+
+Playback engine: LibVLC-Android 3.7.7
+Copyright VideoLAN and its contributors.
+License: GNU Lesser General Public License, version 2.1 or later, as declared by upstream.
+Artifact: org.videolan.android:libvlc-all:3.7.7 (unmodified shared libraries).
+Upstream source and build scripts: https://code.videolan.org/videolan/libvlcjni
+Java source artifact: https://repo.maven.apache.org/maven2/org/videolan/android/libvlc-all/3.7.7/libvlc-all-3.7.7-sources.jar
+License text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+A copy of LGPL 2.1 is included as assets/LGPL-2.1.txt.
+This application places no additional restriction on debugging modifications to the LGPL library. Its Gradle module uses the published library as a separate dependency and can be rebuilt with a replacement library.
+
+AndroidX libraries: Copyright The Android Open Source Project. Apache License 2.0.
+https://source.android.com/docs/setup/about/licenses
+https://www.apache.org/licenses/LICENSE-2.0
+
+Kotlin standard library: Copyright JetBrains and contributors. Apache License 2.0.
+https://github.com/JetBrains/kotlin
+
+This software is supplied without warranty. See the component license texts for full terms.
+
+Interface icons: Lucide, revision 1ef60af944de207e0d5176905a0759ba12e6ee8d.
+https://lucide.dev/license
+ISC license, with MIT notices for Feather-derived icons. The complete upstream notice is included as assets/Lucide-LICENSE.txt. SVG assets are mechanically converted to Android VectorDrawable paths by ultimate/import-icons.ps1.
